@@ -17,8 +17,10 @@ COPY . /code
 RUN useradd -m -u 1000 user
 
 # --- THE FIX IS HERE ---
-# Give the user permission to write to the static_ffmpeg folder so it can create its lock file
-RUN chown -R user:user /usr/local/lib/python3.10/site-packages/static_ffmpeg
+# Give the 'user' ownership of the ENTIRE /code directory
+# This lets your app create 'queue_pending', 'temp_uploads', etc.
+RUN chown -R user:user /code
+RUN chown -R user:user /usr/local/lib/python3.10/site-packages
 
 # Switch to the new user
 USER user
