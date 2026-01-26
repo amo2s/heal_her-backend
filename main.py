@@ -17,7 +17,6 @@ from routers.chat_routes import router as chat_router
 from database import supabase
 
 # --- SERVICE IMPORTS ---
-# This handles the Guest Chat (3 messages limit)
 from services.guest_service import process_guest_chat
 
 # --- SOCKET.IO SETUP ---
@@ -51,6 +50,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- 🟢 WAKE-UP ENDPOINT (Fixes 404 & Allows Pinging) ---
+@app.get("/")
+async def health_check():
+    return {
+        "status": "active", 
+        "message": "Heal Her Backend is Running 🏥",
+        "documentation": "/docs"
+    }
+
 # --- MOUNT SOCKET.IO ---
 combined_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
@@ -60,11 +68,9 @@ app.include_router(login.router)
 app.include_router(user.router)      
 app.include_router(profiles.router)
 app.include_router(verification.router) 
-# The Chat Router (Handles Signed-In Users + Daily Limit of 50)
-app.include_router(chat_router)      
+app.include_router(chat_router)       
 
 # --- GUEST CHAT ENDPOINT ---
-# (Handles Anonymous Users + Total Limit of 3)
 class GuestChatRequest(BaseModel):
     fingerprint: str
     message: str
@@ -75,12 +81,8 @@ async def guest_chat_endpoint(request: GuestChatRequest):
 
 
 # --- SOCKET.IO EVENTS ---
-
 @sio.event
 async def connect(sid, environ, auth):
-    """
-    Called when frontend connects: socket = io(url, { auth: { token: '...' } })
-    """
     print(f"🔌 Socket Connected: {sid}")
     
     token = auth.get("token") if auth else None
