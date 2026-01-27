@@ -2,13 +2,13 @@ import static_ffmpeg
 static_ffmpeg.add_paths()
 
 import socketio
+import threading
+import asyncio
+import urllib.parse # <--- CRITICAL: Required for Socket.IO token parsing
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
-import threading
-import asyncio
-import urllib.parse  # <--- REQUIRED for parsing Socket.IO query strings
 
 # --- ROUTER IMPORTS ---
 from routers import sign_up, login, user, profiles, verification 
@@ -18,19 +18,24 @@ from database import supabase
 # --- SERVICE IMPORTS ---
 from services.guest_service import process_guest_chat
 
-# --- 1. GLOBAL TRUSTED LIST (For HTTP API) ---
+# --- 1. GLOBAL TRUSTED LIST ---
+# Browsers BLOCK 'withCredentials' requests if you use "*".
+# You MUST use this explicit list.
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://heal-her.vercel.app",
-    "https://www.heal-her.vercel.app"
+    "https://heal-her.vercel.app/",
+    "https://www.heal-her.vercel.app",
+    "https://www.heal-her.vercel.app/"
 ]
 
 # --- 2. SOCKET.IO SETUP ---
-# cors_allowed_origins="*" is CRITICAL here to stop the 403 error.
+# cors_credentials=True allows the frontend to send the secure session.
 sio = socketio.AsyncServer(
     async_mode='asgi', 
-    cors_allowed_origins="*" 
+    cors_allowed_origins=origins, 
+    cors_credentials=True
 )
 
 # --- 3. LIFESPAN MANAGER ---
@@ -38,6 +43,7 @@ sio = socketio.AsyncServer(
 async def lifespan(app: FastAPI):
     print("\n--- 🏥 Heal Her System Startup ---")
     try:
+        # Start the verification worker in the background
         worker_thread = threading.Thread(target=verification.worker_loop, daemon=True)
         worker_thread.start()
         print("✅ Verification Worker Active")
@@ -62,7 +68,6 @@ async def health_check():
     return {"status": "active", "message": "Heal Her Backend is Running 🏥"}
 
 # --- 5. MOUNT SOCKET.IO ---
-# Wraps the FastAPI app so Socket.IO catches requests first
 combined_app = socketio.ASGIApp(
     socketio_server=sio, 
     other_asgi_app=app,
@@ -86,19 +91,18 @@ class GuestChatRequest(BaseModel):
 async def guest_chat_endpoint(request: GuestChatRequest):
     return await process_guest_chat(request.fingerprint, request.message, supabase)
 
-# --- 6. SOCKET.IO EVENTS (Fixed Logic) ---
+# --- 6. SOCKET.IO EVENTS ---
 @sio.event
 async def connect(sid, environ, auth):
     print(f"🔌 Socket Connection Attempt: {sid}")
     
     token = None
     
-    # METHOD A: Check 'auth' object (Standard Socket.IO)
+    # METHOD A: Check 'auth' object
     if auth and "token" in auth:
         token = auth["token"]
     
-    # METHOD B: Check Query String (Fallback)
-    # This is what was missing! Socket.IO often puts the token here.
+    # METHOD B: Check Query String (Essential for WebSocket fallback)
     if not token:
         try:
             query_string = environ.get('QUERY_STRING', '')
@@ -108,10 +112,9 @@ async def connect(sid, environ, auth):
         except Exception:
             pass
 
-    # If we still have no token, REJECT the connection.
     if not token:
         print(f"❌ Access Denied: No token found for {sid}")
-        return False  # This sends the 403 Forbidden
+        return False
 
     # Verify User with Supabase
     try:
@@ -123,13 +126,10 @@ async def connect(sid, environ, auth):
         user_id = res.user.id
         print(f"✅ User {user_id} authenticated on {sid}")
         
-        # Save session
         await sio.save_session(sid, {'user_id': user_id})
-        
-        # Start the background monitor for this user
         asyncio.create_task(monitor_verification_status(sid, user_id))
         
-        return True # Connection Successful
+        return True
         
     except Exception as e:
         print(f"❌ Auth Exception: {e}")
@@ -140,10 +140,7 @@ async def disconnect(sid):
     print(f"🔌 Socket Disconnected: {sid}")
 
 async def monitor_verification_status(sid, user_id):
-    """
-    Polls the database for status updates and pushes them to the client.
-    """
-    max_retries = 60 # 30 seconds timeout
+    max_retries = 60 # 30 seconds
     for _ in range(max_retries):
         try:
             response = supabase.table("profiles").select("verification_status").eq("id", user_id).single().execute()
