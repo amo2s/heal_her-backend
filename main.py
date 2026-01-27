@@ -1,4 +1,3 @@
-# main.py
 import static_ffmpeg
 static_ffmpeg.add_paths()
 
@@ -21,16 +20,17 @@ from services.guest_service import process_guest_chat
 
 # --- 🔒 SECURITY: TRUSTED ORIGINS ---
 # This list controls WHO is allowed to connect.
+# I added the 'www' version to fix your 403 error.
 origins = [
-    "http://localhost:3000",                  # Localhost
-    "http://127.0.0.1:3000",                  # Localhost IP
-    "https://heal-her.vercel.app",            # <--- ✅ YOUR VERCEL APP
-    "https://heal-her.vercel.app/",           # (Just in case Vercel adds a slash)
+    "http://localhost:3000",                  
+    "http://127.0.0.1:3000",                  
+    "https://heal-her.vercel.app",            # Your main domain
+    "https://heal-her.vercel.app/",           # With slash
+    "https://www.heal-her.vercel.app",        # <--- ADDED THIS (Fixes 403 if redirecting)
+    "https://www.heal-her.vercel.app/",       
 ]
 
 # --- SOCKET.IO SETUP ---
-# We use the 'origins' list here. 
-# This tells Socket.IO: "Only talk to these websites."
 sio = socketio.AsyncServer(
     async_mode='asgi', 
     cors_allowed_origins=origins 
@@ -57,7 +57,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
 
 # --- CORS MIDDLEWARE ---
-# This handles the HTTP/API requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,       # ✅ Same trusted list
@@ -107,7 +106,7 @@ async def connect(sid, environ, auth):
     # 2. Fallback: Check query params (Some clients send it there)
     if not token:
         query_string = environ.get('QUERY_STRING', '')
-        # Parse query string manually if needed, or rely on auth dict
+        # Simple manual parse if needed, but 'auth' is preferred
     
     if not token:
         print(f"❌ No token provided for {sid}, disconnecting...")
@@ -142,6 +141,7 @@ async def monitor_verification_status(sid, user_id):
     
     for _ in range(max_retries):
         try:
+            # Re-query the database to get fresh status
             response = supabase.table("profiles").select("verification_status").eq("id", user_id).single().execute()
             status = response.data.get("verification_status")
 
