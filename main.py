@@ -4,7 +4,7 @@ static_ffmpeg.add_paths()
 import socketio
 import threading
 import asyncio
-import urllib.parse # <--- CRITICAL: Required for Socket.IO token parsing
+import urllib.parse
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -18,9 +18,9 @@ from database import supabase
 # --- SERVICE IMPORTS ---
 from services.guest_service import process_guest_chat
 
-# --- 1. GLOBAL TRUSTED LIST ---
-# Browsers BLOCK 'withCredentials' requests if you use "*".
-# You MUST use this explicit list.
+# --- 1. CONFIGURATION ---
+# Browsers REQUIRE this explicit list for secure connections.
+# Do NOT change this to "*".
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -30,8 +30,9 @@ origins = [
     "https://www.heal-her.vercel.app/"
 ]
 
-# --- 2. SOCKET.IO SETUP ---
-# cors_credentials=True allows the frontend to send the secure session.
+# --- 2. SOCKET.IO SERVER ---
+# cors_allowed_origins=origins (Allows the connection)
+# cors_credentials=True (Allows the Auth Token)
 sio = socketio.AsyncServer(
     async_mode='asgi', 
     cors_allowed_origins=origins, 
@@ -43,7 +44,6 @@ sio = socketio.AsyncServer(
 async def lifespan(app: FastAPI):
     print("\n--- 🏥 Heal Her System Startup ---")
     try:
-        # Start the verification worker in the background
         worker_thread = threading.Thread(target=verification.worker_loop, daemon=True)
         worker_thread.start()
         print("✅ Verification Worker Active")
@@ -102,7 +102,7 @@ async def connect(sid, environ, auth):
     if auth and "token" in auth:
         token = auth["token"]
     
-    # METHOD B: Check Query String (Essential for WebSocket fallback)
+    # METHOD B: Check Query String (Fallback)
     if not token:
         try:
             query_string = environ.get('QUERY_STRING', '')
