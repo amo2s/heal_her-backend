@@ -19,8 +19,23 @@ from database import supabase
 # --- SERVICE IMPORTS ---
 from services.guest_service import process_guest_chat
 
+# --- 🚨 CONFIGURATION: TRUSTED ORIGINS 🚨 ---
+# You MUST list the exact URLs of your frontend here.
+# Browsers block requests if you use "*" with credentials (cookies/headers).
+origins = [
+    "http://localhost:3000",          # For local testing
+    "http://127.0.0.1:3000",          # For local testing (IP)
+    "https://heal-her.vercel.app",    # <--- REPLACE THIS with your Vercel/Netlify URL
+    "https://huggingface.co",         # If hosting frontend on HF Spaces
+    # Add any other domains you use here...
+]
+
 # --- SOCKET.IO SETUP ---
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins="*")
+# We restrict Socket.IO to the same trusted origins for security
+sio = socketio.AsyncServer(
+    async_mode='asgi', 
+    cors_allowed_origins=origins # Uses the trusted list above
+)
 
 # --- LIFESPAN MANAGER ---
 @asynccontextmanager
@@ -42,16 +57,18 @@ async def lifespan(app: FastAPI):
 # --- FASTAPI SETUP ---
 app = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
 
+# --- 🚨 CORS MIDDLEWARE (THE FIX) 🚨 ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
+    allow_origins=origins,        # ✅ Specific list (Fixes "Immediate Failure")
+    allow_credentials=True,       # ✅ Allows your Session Token to pass
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 🟢 WAKE-UP ENDPOINT (Fixes 404 & Allows Pinging) ---
-@app.get("/")
+# --- 🟢 WAKE-UP ENDPOINT (Fixes 405 Errors) ---
+# Accepts HEAD requests so hosting providers stop complaining
+@app.api_route("/", methods=["GET", "HEAD"])
 async def health_check():
     return {
         "status": "active", 
