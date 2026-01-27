@@ -2,13 +2,13 @@ import static_ffmpeg
 static_ffmpeg.add_paths()
 
 import socketio
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
-import os
 import threading
 import asyncio
+import urllib.parse  # <--- REQUIRED for parsing Socket.IO query strings
 
 # --- ROUTER IMPORTS ---
 from routers import sign_up, login, user, profiles, verification 
@@ -18,66 +18,56 @@ from database import supabase
 # --- SERVICE IMPORTS ---
 from services.guest_service import process_guest_chat
 
-# --- 🔒 SECURITY: TRUSTED ORIGINS (For API) ---
-# We keep this STRICT so random websites cannot steal your data via API.
+# --- 1. GLOBAL TRUSTED LIST (For HTTP API) ---
 origins = [
-    "http://localhost:3000",                  
-    "http://127.0.0.1:3000",                  
-    "https://heal-her.vercel.app",            
-    "https://heal-her.vercel.app/",           
-    "https://www.heal-her.vercel.app",        
-    "https://www.heal-her.vercel.app/",       
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://heal-her.vercel.app",
+    "https://www.heal-her.vercel.app"
 ]
 
-# --- 🔌 SOCKET.IO SETUP (The Fix) ---
-# We allow "*" here because we enforce Token Authentication inside the 'connect' event.
-# This fixes the "403 Forbidden" error caused by Vercel redirects/previews.
+# --- 2. SOCKET.IO SETUP ---
+# cors_allowed_origins="*" is CRITICAL here to stop the 403 error.
 sio = socketio.AsyncServer(
     async_mode='asgi', 
     cors_allowed_origins="*" 
 )
 
-# --- LIFESPAN MANAGER ---
+# --- 3. LIFESPAN MANAGER ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("\n--- 🏥 Heal Her System Startup (Socket.IO Mode) ---")
-    
-    # 1. Start Verification Worker
+    print("\n--- 🏥 Heal Her System Startup ---")
     try:
-        print("👷 Starting Verification Background Worker...")
         worker_thread = threading.Thread(target=verification.worker_loop, daemon=True)
         worker_thread.start()
         print("✅ Verification Worker Active")
     except Exception as e:
-        print(f"❌ Failed to start worker: {e}")
-
+        print(f"❌ Worker Error: {e}")
     yield
-    print("--- System Shutdown ---")
 
-# --- FASTAPI SETUP ---
+# --- 4. FASTAPI SETUP ---
 app = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
 
-# --- CORS MIDDLEWARE ---
-# Keep this STRICT using the 'origins' list.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       
-    allow_credentials=True, 
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 🟢 WAKE-UP ENDPOINT ---
+# --- 🟢 HEALTH CHECK ---
 @app.api_route("/", methods=["GET", "HEAD"])
 async def health_check():
-    return {
-        "status": "active", 
-        "message": "Heal Her Backend is Running 🏥",
-        "documentation": "/docs"
-    }
+    return {"status": "active", "message": "Heal Her Backend is Running 🏥"}
 
-# --- MOUNT SOCKET.IO ---
-combined_app = socketio.ASGIApp(sio, other_asgi_app=app)
+# --- 5. MOUNT SOCKET.IO ---
+# Wraps the FastAPI app so Socket.IO catches requests first
+combined_app = socketio.ASGIApp(
+    socketio_server=sio, 
+    other_asgi_app=app,
+    socketio_path="/socket.io/"
+)
 
 # --- REGISTER ROUTERS ---
 app.include_router(sign_up.router)
@@ -87,7 +77,7 @@ app.include_router(profiles.router)
 app.include_router(verification.router) 
 app.include_router(chat_router)       
 
-# --- GUEST CHAT ENDPOINT ---
+# --- GUEST CHAT ---
 class GuestChatRequest(BaseModel):
     fingerprint: str
     message: str
@@ -96,40 +86,54 @@ class GuestChatRequest(BaseModel):
 async def guest_chat_endpoint(request: GuestChatRequest):
     return await process_guest_chat(request.fingerprint, request.message, supabase)
 
-
-# --- SOCKET.IO EVENTS ---
+# --- 6. SOCKET.IO EVENTS (Fixed Logic) ---
 @sio.event
 async def connect(sid, environ, auth):
-    print(f"🔌 Socket Connected: {sid}")
+    print(f"🔌 Socket Connection Attempt: {sid}")
     
-    # 🔐 SECURITY CHECK (Replaces CORS)
-    # 1. Check for token in 'auth' object
-    token = auth.get("token") if auth else None
+    token = None
     
-    # 2. Fallback: Check query params
+    # METHOD A: Check 'auth' object (Standard Socket.IO)
+    if auth and "token" in auth:
+        token = auth["token"]
+    
+    # METHOD B: Check Query String (Fallback)
+    # This is what was missing! Socket.IO often puts the token here.
     if not token:
-        query_string = environ.get('QUERY_STRING', '')
-        # Add parsing logic here if needed
-    
+        try:
+            query_string = environ.get('QUERY_STRING', '')
+            params = urllib.parse.parse_qs(query_string)
+            if 'token' in params:
+                token = params['token'][0]
+        except Exception:
+            pass
+
+    # If we still have no token, REJECT the connection.
     if not token:
-        print(f"❌ No token provided for {sid}, disconnecting...")
-        await sio.disconnect(sid)
-        return
+        print(f"❌ Access Denied: No token found for {sid}")
+        return False  # This sends the 403 Forbidden
 
     # Verify User with Supabase
-    user = supabase.auth.get_user(token)
-    if not user or not user.user:
-        print(f"❌ Invalid token for {sid}, disconnecting...")
-        await sio.disconnect(sid)
-        return
-
-    user_id = user.user.id
-    print(f"✅ User {user_id} authenticated on socket {sid}")
-    
-    await sio.save_session(sid, {'user_id': user_id})
-
-    # Start Monitoring Verification Status
-    asyncio.create_task(monitor_verification_status(sid, user_id))
+    try:
+        res = supabase.auth.get_user(token)
+        if not res or not res.user:
+            print(f"❌ Access Denied: Invalid/Expired token for {sid}")
+            return False
+        
+        user_id = res.user.id
+        print(f"✅ User {user_id} authenticated on {sid}")
+        
+        # Save session
+        await sio.save_session(sid, {'user_id': user_id})
+        
+        # Start the background monitor for this user
+        asyncio.create_task(monitor_verification_status(sid, user_id))
+        
+        return True # Connection Successful
+        
+    except Exception as e:
+        print(f"❌ Auth Exception: {e}")
+        return False
 
 @sio.event
 async def disconnect(sid):
@@ -137,33 +141,26 @@ async def disconnect(sid):
 
 async def monitor_verification_status(sid, user_id):
     """
-    Checks DB every 0.5s and emits event to frontend if status changes.
+    Polls the database for status updates and pushes them to the client.
     """
-    print(f"👀 Monitoring started for {user_id}")
-    max_retries = 40 # 20 seconds
-    
+    max_retries = 60 # 30 seconds timeout
     for _ in range(max_retries):
         try:
-            # Re-query the database to get fresh status
             response = supabase.table("profiles").select("verification_status").eq("id", user_id).single().execute()
             status = response.data.get("verification_status")
 
             if status == "approved":
                 await sio.emit("verification_result", {"status": "success", "message": "Verified!"}, room=sid)
                 return
-
             elif status == "rejected_male":
                 await sio.emit("verification_result", {"status": "failed", "message": "Male voice detected"}, room=sid)
-                return 
-
+                return
             elif status == "rejected_phrase":
-                await sio.emit("verification_result", {"status": "failed", "message": "Incorrect phrase."}, room=sid)
+                await sio.emit("verification_result", {"status": "failed", "message": "Incorrect phrase"}, room=sid)
                 return
             
             await asyncio.sleep(0.5)
-            
-        except Exception as e:
-            print(f"Monitor Error: {e}")
-            break
+        except Exception:
+            await asyncio.sleep(0.5)
             
     await sio.emit("verification_result", {"status": "failed", "message": "Timeout"}, room=sid)
