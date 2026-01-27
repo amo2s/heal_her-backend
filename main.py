@@ -18,22 +18,23 @@ from database import supabase
 # --- SERVICE IMPORTS ---
 from services.guest_service import process_guest_chat
 
-# --- 🔒 SECURITY: TRUSTED ORIGINS ---
-# This list controls WHO is allowed to connect.
-# I added the 'www' version to fix your 403 error.
+# --- 🔒 SECURITY: TRUSTED ORIGINS (For API) ---
+# We keep this STRICT so random websites cannot steal your data via API.
 origins = [
     "http://localhost:3000",                  
     "http://127.0.0.1:3000",                  
-    "https://heal-her.vercel.app",            # Your main domain
-    "https://heal-her.vercel.app/",           # With slash
-    "https://www.heal-her.vercel.app",        # <--- ADDED THIS (Fixes 403 if redirecting)
+    "https://heal-her.vercel.app",            
+    "https://heal-her.vercel.app/",           
+    "https://www.heal-her.vercel.app",        
     "https://www.heal-her.vercel.app/",       
 ]
 
-# --- SOCKET.IO SETUP ---
+# --- 🔌 SOCKET.IO SETUP (The Fix) ---
+# We allow "*" here because we enforce Token Authentication inside the 'connect' event.
+# This fixes the "403 Forbidden" error caused by Vercel redirects/previews.
 sio = socketio.AsyncServer(
     async_mode='asgi', 
-    cors_allowed_origins=origins 
+    cors_allowed_origins="*" 
 )
 
 # --- LIFESPAN MANAGER ---
@@ -57,9 +58,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
 
 # --- CORS MIDDLEWARE ---
+# Keep this STRICT using the 'origins' list.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # ✅ Same trusted list
+    allow_origins=origins,       
     allow_credentials=True, 
     allow_methods=["*"],
     allow_headers=["*"],
@@ -100,13 +102,14 @@ async def guest_chat_endpoint(request: GuestChatRequest):
 async def connect(sid, environ, auth):
     print(f"🔌 Socket Connected: {sid}")
     
-    # 1. Check for token in 'auth' object (Standard Socket.IO)
+    # 🔐 SECURITY CHECK (Replaces CORS)
+    # 1. Check for token in 'auth' object
     token = auth.get("token") if auth else None
     
-    # 2. Fallback: Check query params (Some clients send it there)
+    # 2. Fallback: Check query params
     if not token:
         query_string = environ.get('QUERY_STRING', '')
-        # Simple manual parse if needed, but 'auth' is preferred
+        # Add parsing logic here if needed
     
     if not token:
         print(f"❌ No token provided for {sid}, disconnecting...")

@@ -47,7 +47,7 @@ CHALLENGES = [
     "I confirm that I am a living person recording this audio right now."
 ]
 
-# --- 1. THE WORKER LOGIC (Unchanged - just updates DB) ---
+# --- 1. THE WORKER LOGIC (Background Process) ---
 def process_audio_file(filename):
     try:
         user_id = filename.split("_")[0]
@@ -55,7 +55,7 @@ def process_audio_file(filename):
         
         print(f"⚙️ WORKER: Processing {filename}...")
 
-        # 1. Run Heavy Math
+        # 1. Run Heavy Math (Gender Analysis)
         result = analyze_audio(processing_path)
         
         if result.get("error"):
@@ -129,20 +129,17 @@ def worker_loop():
 threading.Thread(target=worker_loop, daemon=True).start()
 
 
-# --- 2. WEBSOCKET ENDPOINT (NEW!) ---
+# --- 2. WEBSOCKET ENDPOINT ---
 @router.websocket("/ws/verification")
 async def websocket_endpoint(websocket: WebSocket):
-    # 1. Accept Connection
     await websocket.accept()
     
     try:
-        # 2. Extract Token from Query Params (ws://.../?token=XYZ)
         token = websocket.query_params.get("token")
         if not token:
             await websocket.close(code=1008)
             return
 
-        # 3. Validate User (Manual Supabase Call since Depends doesn't work easily in WS)
         user = supabase.auth.get_user(token)
         if not user or not user.user:
             await websocket.close(code=1008)
@@ -151,18 +148,16 @@ async def websocket_endpoint(websocket: WebSocket):
         user_id = user.user.id
         print(f"🔌 WS Connected: {user_id}")
 
-        # 4. Monitoring Loop (Server-Side Polling)
-        # We check the DB every 0.5s so the frontend doesn't have to.
+        # Monitoring Loop (Server-Side Polling)
         max_retries = 40  # 20 seconds max
         for _ in range(max_retries):
             
-            # Fetch latest status
             response = supabase.table("profiles").select("verification_status").eq("id", user_id).single().execute()
             status = response.data.get("verification_status")
 
             if status == "approved":
                 await websocket.send_json({"status": "success", "message": "Verification Successful"})
-                return  # Close connection after success
+                return
 
             elif status == "rejected_male":
                 await websocket.send_json({"status": "failed", "message": "Male voice detected"})
@@ -173,6 +168,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 return
 
             elif status == "rejected_phrase":
+                # Matches Frontend expectation for "phrase" error
                 await websocket.send_json({"status": "failed", "message": "Incorrect phrase."})
                 return
 
@@ -180,10 +176,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({"status": "failed", "message": "AI Analysis failed."})
                 return
 
-            # Still processing... wait and loop again
             await asyncio.sleep(0.5)
         
-        # If loop finishes without result
         await websocket.send_json({"status": "failed", "message": "Timeout"})
 
     except WebSocketDisconnect:
@@ -223,15 +217,15 @@ async def verify_voice(
             "verification_status": "processing"
         }).eq("id", user_id).execute()
 
-        # 2. Save File
+        # 2. Save File Temporarily
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # 3. Transcribe (Groq)
+        # 3. Transcribe with Groq (PHRASE CHECK LOGIC)
         detected_text = ""
         transcription_success = False
         
-        for index, api_key in enumerate(GROQ_KEYS):
+        for api_key in GROQ_KEYS:
             try:
                 client = Groq(api_key=api_key)
                 with open(temp_path, "rb") as audio_file:
@@ -246,6 +240,7 @@ async def verify_voice(
                 transcription_success = True
                 break 
             except Exception as e:
+                print(f"Groq API Error: {e}")
                 continue
 
         if not transcription_success:
@@ -253,28 +248,33 @@ async def verify_voice(
             supabase.table("profiles").update({"verification_status": "error_ai_busy"}).eq("id", user_id).execute()
             raise HTTPException(status_code=500, detail="AI Service Busy.")
 
-        # 4. Check Phrase
+        # 4. Compare Phrase
         target_text = expected_phrase.strip().lower()
+        
+        # Calculate similarity ratio (0.0 to 1.0)
         similarity = SequenceMatcher(None, detected_text, target_text).ratio()
         
+        print(f"🗣️ Phrase Check: '{detected_text}' vs '{target_text}' (Score: {similarity:.2f})")
+
+        # If similarity is low AND the target text isn't found inside the detected text
         if similarity < 0.4 and target_text not in detected_text:
             if os.path.exists(temp_path): os.remove(temp_path)
             
-            # Update DB so WebSocket picks it up immediately
+            # Update DB to 'rejected_phrase' -> Triggers WebSocket -> Triggers Frontend Error
             supabase.table("profiles").update({"verification_status": "rejected_phrase"}).eq("id", user_id).execute()
             
             return {
                 "status": "failed",
                 "message": "Incorrect phrase.",
-                "data": {"text_match": False}
+                "data": {"text_match": False, "detected": detected_text}
             }
 
-        # 5. Move to Worker Queue
+        # 5. Phrase OK -> Move to Worker Queue for Gender Analysis
         shutil.move(temp_path, final_pending_path)
         
         return {
             "status": "success", 
-            "message": "Queued",
+            "message": "Queued for biometric analysis",
             "data": {"text_match": True}
         }
 
