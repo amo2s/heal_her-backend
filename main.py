@@ -19,22 +19,21 @@ from database import supabase
 # --- SERVICE IMPORTS ---
 from services.guest_service import process_guest_chat
 
-# --- 🚨 CONFIGURATION: TRUSTED ORIGINS 🚨 ---
-# You MUST list the exact URLs of your frontend here.
-# Browsers block requests if you use "*" with credentials (cookies/headers).
+# --- 🔒 SECURITY: TRUSTED ORIGINS ---
+# This list controls WHO is allowed to connect.
 origins = [
-    "http://localhost:3000",          # For local testing
-    "http://127.0.0.1:3000",          # For local testing (IP)
-    "https://heal-her.vercel.app",    # <--- REPLACE THIS with your Vercel/Netlify URL
-    "https://huggingface.co",         # If hosting frontend on HF Spaces
-    # Add any other domains you use here...
+    "http://localhost:3000",                  # Localhost
+    "http://127.0.0.1:3000",                  # Localhost IP
+    "https://heal-her.vercel.app",            # <--- ✅ YOUR VERCEL APP
+    "https://heal-her.vercel.app/",           # (Just in case Vercel adds a slash)
 ]
 
 # --- SOCKET.IO SETUP ---
-# We restrict Socket.IO to the same trusted origins for security
+# We use the 'origins' list here. 
+# This tells Socket.IO: "Only talk to these websites."
 sio = socketio.AsyncServer(
     async_mode='asgi', 
-    cors_allowed_origins=origins # Uses the trusted list above
+    cors_allowed_origins=origins 
 )
 
 # --- LIFESPAN MANAGER ---
@@ -42,7 +41,7 @@ sio = socketio.AsyncServer(
 async def lifespan(app: FastAPI):
     print("\n--- 🏥 Heal Her System Startup (Socket.IO Mode) ---")
     
-    # 1. Start Verification Worker (if needed)
+    # 1. Start Verification Worker
     try:
         print("👷 Starting Verification Background Worker...")
         worker_thread = threading.Thread(target=verification.worker_loop, daemon=True)
@@ -57,17 +56,17 @@ async def lifespan(app: FastAPI):
 # --- FASTAPI SETUP ---
 app = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
 
-# --- 🚨 CORS MIDDLEWARE (THE FIX) 🚨 ---
+# --- CORS MIDDLEWARE ---
+# This handles the HTTP/API requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,        # ✅ Specific list (Fixes "Immediate Failure")
-    allow_credentials=True,       # ✅ Allows your Session Token to pass
+    allow_origins=origins,       # ✅ Same trusted list
+    allow_credentials=True, 
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 🟢 WAKE-UP ENDPOINT (Fixes 405 Errors) ---
-# Accepts HEAD requests so hosting providers stop complaining
+# --- 🟢 WAKE-UP ENDPOINT ---
 @app.api_route("/", methods=["GET", "HEAD"])
 async def health_check():
     return {
@@ -102,7 +101,13 @@ async def guest_chat_endpoint(request: GuestChatRequest):
 async def connect(sid, environ, auth):
     print(f"🔌 Socket Connected: {sid}")
     
+    # 1. Check for token in 'auth' object (Standard Socket.IO)
     token = auth.get("token") if auth else None
+    
+    # 2. Fallback: Check query params (Some clients send it there)
+    if not token:
+        query_string = environ.get('QUERY_STRING', '')
+        # Parse query string manually if needed, or rely on auth dict
     
     if not token:
         print(f"❌ No token provided for {sid}, disconnecting...")
