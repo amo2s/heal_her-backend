@@ -1,88 +1,95 @@
-import torch
-import librosa
-import numpy as np
-from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2FeatureExtractor
+import requests
+import os
 import logging
+import json
+import time
 
 # --- CONFIGURATION ---
-# CHANGED: We now point to the online Repo ID instead of a local folder.
-MODEL_PATH = "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech"
-EXPECTED_SAMPLE_RATE = 16000
+# We use the Inference API URL for the exact same model
+API_URL = "https://api-inference.huggingface.co/models/alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech"
 
-# Setup cleaner logging for production feel
+# Setup logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("HealHer-AI")
+logger = logging.getLogger("HealHer-AI-Cloud")
 
-print(f"⏳ Loading AI Brain from: {MODEL_PATH}")
-print("   (Note: First run will take a moment to download the model)")
+# Load your existing keys from environment variables
+raw_keys = [
+    os.getenv("HUGGINGFACE_API_KEY"),
+    os.getenv("HUGGINGFACE_API_KEY_1"),
+    os.getenv("HUGGINGFACE_API_KEY_2")
+]
+# Clean up keys (remove empty ones and whitespace)
+HF_KEYS = [k.strip() for k in raw_keys if k]
 
-try:
-    # 1. Load Feature Extractor (Sound Only)
-    # This downloads the configuration from Hugging Face automatically
-    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_PATH)
-    
-    # 2. Load the Classification Model
-    # This downloads the 1.2GB weights from Hugging Face automatically
-    model = Wav2Vec2ForSequenceClassification.from_pretrained(MODEL_PATH)
-    
-    logger.info("✅ AI Model Loaded Successfully! System is ready.")
-
-except OSError as e:
-    logger.error(f"❌ CRITICAL: Could not connect to Hugging Face or find model: {MODEL_PATH}.")
-    logger.error(f"Details: {e}")
-    model = None
-    feature_extractor = None
-except Exception as e:
-    logger.error(f"❌ CRITICAL: Unknown AI Error: {e}")
-    model = None
-    feature_extractor = None
+if not HF_KEYS:
+    logger.error("⚠️ CRITICAL: No HUGGINGFACE_API_KEY found! Voice verification will fail.")
 
 def analyze_audio(file_path: str):
     """
-    Production-ready audio analysis.
-    Returns: Dictionary with 'gender', 'confidence', and 'raw_scores'.
+    Serverless Analysis: Sends audio to Hugging Face API.
+    Returns: {'gender': 'female', 'confidence': 0.98, 'status': 'success'}
     """
-    # 1. Safety Check: Is the model actually loaded?
-    if not model or not feature_extractor:
-        logger.error("Attempted analysis with no model loaded.")
-        return {"error": "AI Service Unavailable. Contact Admin."}
+    if not HF_KEYS:
+        return {"error": "Server misconfiguration: No AI Keys."}
 
+    # 1. Read the audio file from disk
     try:
-        # 2. Load Audio & Resample
-        # 'sr=16000' is mandatory. If the user uploads 44.1kHz, this fixes it instantly.
-        audio_input, sample_rate = librosa.load(file_path, sr=EXPECTED_SAMPLE_RATE)
-
-        # 3. Pre-processing (The "Ears")
-        # converts raw sound into the tensor format the model expects
-        inputs = feature_extractor(
-            audio_input, 
-            sampling_rate=EXPECTED_SAMPLE_RATE, 
-            return_tensors="pt", 
-            padding=True
-        )
-
-        # 4. Prediction (The "Brain")
-        # Disable gradient calculation for speed & memory
-        with torch.no_grad(): 
-            logits = model(inputs.input_values).logits
-
-        # 5. Math: Convert Logits to Probabilities (0.0 to 1.0)
-        scores = torch.softmax(logits, dim=1).detach().cpu().numpy()[0]
-        
-        # 6. Label Extraction
-        # The model config contains the map: {0: 'female', 1: 'male', ...}
-        id2label = model.config.id2label
-        predicted_id = torch.argmax(logits, dim=1).item()
-        predicted_label = id2label[predicted_id]
-        confidence = float(scores[predicted_id])
-
-        # 7. Return Clean Data
-        return {
-            "gender": predicted_label,      # e.g., "female"
-            "confidence": round(confidence, 4), # e.g., 0.9845
-            "status": "success"
-        }
-
+        with open(file_path, "rb") as f:
+            data = f.read()
     except Exception as e:
-        logger.error(f"Analysis Failed for file {file_path}: {e}")
-        return {"error": "Audio processing failed. File might be corrupt.", "details": str(e)}
+        return {"error": f"Could not read file: {str(e)}"}
+
+    # 2. Try Keys (Failover System)
+    last_error = None
+    
+    for key in HF_KEYS:
+        headers = {"Authorization": f"Bearer {key}"}
+        
+        try:
+            logger.info(f"☁️ Sending audio to AI Cloud...")
+            response = requests.post(API_URL, headers=headers, data=data)
+            
+            # Case A: Model is Loading (503 Error)
+            # Hugging Face puts free models to sleep. We must wait for it to wake up.
+            if response.status_code == 503:
+                error_data = response.json()
+                estimated_time = error_data.get("estimated_time", 20)
+                logger.info(f"💤 AI is sleeping. Waking up... (Wait {estimated_time}s)")
+                
+                # Wait for the model to load
+                time.sleep(estimated_time)
+                
+                # Retry the request with the same key
+                logger.info("🔄 Retrying request...")
+                response = requests.post(API_URL, headers=headers, data=data)
+
+            # Check for other errors
+            if response.status_code != 200:
+                logger.warning(f"⚠️ API Error {response.status_code}: {response.text}")
+                continue # Try next key
+
+            # Case B: Success
+            result = response.json()
+            
+            # The API returns a list of dicts: 
+            # [{'label': 'female', 'score': 0.99}, {'label': 'male', 'score': 0.01}]
+            
+            # Sort by score (highest confidence first)
+            top_result = sorted(result, key=lambda x: x['score'], reverse=True)[0]
+            
+            predicted_label = top_result['label'] # 'female' or 'male'
+            confidence = top_result['score']
+            
+            return {
+                "gender": predicted_label.lower(),
+                "confidence": round(confidence, 4),
+                "status": "success"
+            }
+
+        except Exception as e:
+            last_error = e
+            logger.error(f"❌ Key failed: {e}")
+            continue
+
+    # If all keys fail
+    return {"error": "AI Cloud busy or unreachable.", "details": str(last_error)}
