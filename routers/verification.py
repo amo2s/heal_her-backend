@@ -5,7 +5,7 @@ import time
 import random
 import threading
 import asyncio
-import json
+import uuid  # <--- Required for Unique Task IDs
 from difflib import SequenceMatcher
 from services.ai_gender import analyze_audio
 from database import supabase
@@ -47,17 +47,36 @@ CHALLENGES = [
     "I confirm that I am a living person recording this audio right now."
 ]
 
+# --- 🛡️ ZOMBIE KILLER (Global State) ---
+# Tracks the 'active' request ID for each user.
+# If a worker finishes but sees its ID is old, it dies silently.
+CURRENT_TASKS = {} 
+
 # --- 1. THE WORKER LOGIC (Background Process) ---
-def process_audio_file(filename):
+def process_audio_file(filename, request_id):
     try:
         user_id = filename.split("_")[0]
         processing_path = os.path.join(PROCESSING_DIR, filename)
         
+        # 🛑 CHECK 1: Is this task still valid?
+        # If the user clicked verify again, CURRENT_TASKS[user_id] will be different.
+        if CURRENT_TASKS.get(user_id) != request_id:
+            print(f"💀 Zombie Worker Killed for {user_id} (New request took over)")
+            if os.path.exists(processing_path): os.remove(processing_path)
+            return
+
         print(f"⚙️ WORKER: Processing {filename}...")
 
         # 1. Run Heavy Math (Gender Analysis)
         result = analyze_audio(processing_path)
         
+        # 🛑 CHECK 2: Double check before writing to DB
+        # The analysis took 5-10s. Did the user restart in that time?
+        if CURRENT_TASKS.get(user_id) != request_id:
+            print(f"💀 Zombie Worker Killed at finish line for {user_id}")
+            if os.path.exists(processing_path): os.remove(processing_path)
+            return
+
         if result.get("error"):
             supabase.table("profiles").update({
                 "verification_status": "error_analysis"
@@ -66,8 +85,9 @@ def process_audio_file(filename):
 
         gender = result["gender"]
         confidence = result["confidence"]
+        pitch = result.get("pitch_hz", 0)
         
-        print(f"   ✅ Result: {gender.upper()} ({confidence:.2f})")
+        print(f"   ✅ Result: {gender.upper()} ({confidence:.2f}) [Pitch: {pitch:.2f}Hz]")
 
         # 2. DECISION LOGIC
         if gender == "female" and confidence > 0.85:
@@ -109,17 +129,30 @@ def worker_loop():
                 time.sleep(1)
                 continue
 
-            filename = files[0]
-            pending_path = os.path.join(PENDING_DIR, filename)
-            processing_path = os.path.join(PROCESSING_DIR, filename)
+            filename = files[0] # Grab first file
+            
+            # Extract User ID to look up task
+            parts = filename.split("_")
+            if len(parts) > 2:
+                user_id = parts[0]
+                
+                pending_path = os.path.join(PENDING_DIR, filename)
+                processing_path = os.path.join(PROCESSING_DIR, filename)
 
-            try:
-                shutil.move(pending_path, processing_path)
-            except Exception:
-                time.sleep(1)
-                continue
+                try:
+                    shutil.move(pending_path, processing_path)
+                except Exception:
+                    time.sleep(1)
+                    continue
 
-            process_audio_file(filename)
+                # Pass the CURRENT Task ID to the worker
+                # The worker will carry this ID and check it against the global state later
+                task_id_at_pickup = CURRENT_TASKS.get(user_id)
+                process_audio_file(filename, task_id_at_pickup)
+            
+            else:
+                # Malformed file, just delete
+                os.remove(os.path.join(PENDING_DIR, filename))
 
         except Exception as e:
             print(f"⚠️ Worker Loop Error: {e}")
@@ -129,7 +162,7 @@ def worker_loop():
 threading.Thread(target=worker_loop, daemon=True).start()
 
 
-# --- 2. WEBSOCKET ENDPOINT ---
+# --- 2. WEBSOCKET ENDPOINT (Legacy/Backup) ---
 @router.websocket("/ws/verification")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -196,6 +229,27 @@ async def get_challenge():
     phrase = random.choice(CHALLENGES)
     return {"phrase": phrase}
 
+# 🆕 POLLING ENDPOINT (The Bank Method)
+@router.get("/check-status")
+async def check_verification_status(current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("user_id")
+    response = supabase.table("profiles").select("verification_status").eq("id", user_id).single().execute()
+    status = response.data.get("verification_status")
+
+    if status == "approved":
+        return {"status": "success", "message": "Verification Successful"}
+    elif status == "rejected_male":
+        return {"status": "failed", "message": "Male voice detected"}
+    elif status == "rejected_unclear":
+        return {"status": "failed", "message": "Voice unclear. Please try again."}
+    elif status == "rejected_phrase":
+        return {"status": "failed", "message": "Incorrect phrase."}
+    elif status == "error_analysis":
+        return {"status": "failed", "message": "AI Analysis failed."}
+    
+    # If still processing or idle
+    return {"status": "processing"}
+
 @router.post("/analyze-voice")
 async def verify_voice(
     file: UploadFile = File(...), 
@@ -206,6 +260,12 @@ async def verify_voice(
         raise HTTPException(status_code=400, detail="Invalid file format.")
 
     user_id = current_user.get("user_id")
+    
+    # 🆕 GENERATE NEW TASK ID
+    # This invalidates any previous workers instantly.
+    new_request_id = str(uuid.uuid4())
+    CURRENT_TASKS[user_id] = new_request_id 
+    
     safe_filename = f"{user_id}_{int(time.time())}_{file.filename}"
     
     temp_path = os.path.join(TEMP_DIR, safe_filename)
@@ -213,6 +273,7 @@ async def verify_voice(
 
     try:
         # 1. Reset Status to 'processing'
+        # Crucial: This overrides any old 'rejected' status in the DB
         supabase.table("profiles").update({
             "verification_status": "processing"
         }).eq("id", user_id).execute()
