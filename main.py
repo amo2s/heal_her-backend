@@ -20,7 +20,6 @@ from services.guest_service import process_guest_chat
 
 # --- 1. CONFIGURATION ---
 # Browsers REQUIRE this explicit list for secure connections.
-# Do NOT change this to "*".
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -31,8 +30,6 @@ origins = [
 ]
 
 # --- 2. SOCKET.IO SERVER ---
-# cors_allowed_origins=origins (Allows the connection)
-# cors_credentials=True (Allows the Auth Token)
 sio = socketio.AsyncServer(
     async_mode='asgi', 
     cors_allowed_origins=origins, 
@@ -51,10 +48,11 @@ async def lifespan(app: FastAPI):
         print(f"❌ Worker Error: {e}")
     yield
 
-# --- 4. FASTAPI SETUP ---
-app = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
+# --- 4. FASTAPI SETUP (Renamed to prevent conflict) ---
+# We call this 'fast_api_server' internally.
+fast_api_server = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
 
-app.add_middleware(
+fast_api_server.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
@@ -63,31 +61,32 @@ app.add_middleware(
 )
 
 # --- 🟢 HEALTH CHECK ---
-@app.api_route("/", methods=["GET", "HEAD"])
+@fast_api_server.api_route("/", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "active", "message": "Heal Her Backend is Running 🏥"}
 
-# --- 5. MOUNT SOCKET.IO ---
-combined_app = socketio.ASGIApp(
+# --- 5. THE MAIN APP (The Fix!) ---
+# We name the Socket.IO wrapper 'app' so Hugging Face runs THIS first.
+app = socketio.ASGIApp(
     socketio_server=sio, 
-    other_asgi_app=app,
+    other_asgi_app=fast_api_server,
     socketio_path="/socket.io/"
 )
 
-# --- REGISTER ROUTERS ---
-app.include_router(sign_up.router)
-app.include_router(login.router)
-app.include_router(user.router)      
-app.include_router(profiles.router)
-app.include_router(verification.router) 
-app.include_router(chat_router)       
+# --- REGISTER ROUTERS (On the internal API server) ---
+fast_api_server.include_router(sign_up.router)
+fast_api_server.include_router(login.router)
+fast_api_server.include_router(user.router)      
+fast_api_server.include_router(profiles.router)
+fast_api_server.include_router(verification.router) 
+fast_api_server.include_router(chat_router)       
 
 # --- GUEST CHAT ---
 class GuestChatRequest(BaseModel):
     fingerprint: str
     message: str
 
-@app.post("/guest-chat")
+@fast_api_server.post("/guest-chat")
 async def guest_chat_endpoint(request: GuestChatRequest):
     return await process_guest_chat(request.fingerprint, request.message, supabase)
 
