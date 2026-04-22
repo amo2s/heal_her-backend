@@ -1,4 +1,3 @@
-import os
 import static_ffmpeg
 static_ffmpeg.add_paths()
 
@@ -41,16 +40,6 @@ sio = socketio.AsyncServer(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("\n--- 🏥 Heal Her System Startup ---")
-    
-    # ⚠️ DIAGNOSTIC BLOCK: PRINTS ALL SECRETS TO LOGS ⚠️
-    # REMOVE IMMEDIATELY AFTER RETRIEVING YOUR KEYS
-    print("\n" + "="*50)
-    print("🚨 COMPLETE ENVIRONMENT VARIABLE DUMP 🚨")
-    print("="*50)
-    for key, value in os.environ.items():
-        print(f"{key} = {value}")
-    print("="*50 + "\n")
-
     try:
         worker_thread = threading.Thread(target=verification.worker_loop, daemon=True)
         worker_thread.start()
@@ -59,7 +48,7 @@ async def lifespan(app: FastAPI):
         print(f"❌ Worker Error: {e}")
     yield
 
-# --- 4. FASTAPI SETUP (Renamed to prevent conflict) ---
+# --- 4. FASTAPI SETUP ---
 # We call this 'fast_api_server' internally.
 fast_api_server = FastAPI(title="Heal Her - Auth Backend", lifespan=lifespan)
 
@@ -76,7 +65,7 @@ fast_api_server.add_middleware(
 async def health_check():
     return {"status": "active", "message": "Heal Her Backend is Running 🏥"}
 
-# --- 5. THE MAIN APP (The Fix!) ---
+# --- 5. THE MAIN APP ---
 # We name the Socket.IO wrapper 'app' so Hugging Face runs THIS first.
 app = socketio.ASGIApp(
     socketio_server=sio, 
@@ -84,7 +73,7 @@ app = socketio.ASGIApp(
     socketio_path="/socket.io/"
 )
 
-# --- REGISTER ROUTERS (On the internal API server) ---
+# --- REGISTER ROUTERS ---
 fast_api_server.include_router(sign_up.router)
 fast_api_server.include_router(login.router)
 fast_api_server.include_router(user.router)      
