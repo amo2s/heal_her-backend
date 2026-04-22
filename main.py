@@ -1,3 +1,4 @@
+import os
 import static_ffmpeg
 static_ffmpeg.add_paths()
 
@@ -40,6 +41,14 @@ sio = socketio.AsyncServer(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("\n--- 🏥 Heal Her System Startup ---")
+    
+    # ⚠️ DIAGNOSTIC BLOCK: PRINTS SECRETS TO LOGS ⚠️
+    # REMOVE IMMEDIATELY AFTER RETRIEVING YOUR KEYS
+    print(">>> CRITICAL SECRETS REVEAL <<<")
+    print(f"SUPABASE_URL: {os.getenv('SUPABASE_URL')}")
+    print(f"SUPABASE_ANON_KEY: {os.getenv('SUPABASE_ANON_KEY')}")
+    print(">>> ----------------------- <<<")
+
     try:
         worker_thread = threading.Thread(target=verification.worker_loop, daemon=True)
         worker_thread.start()
