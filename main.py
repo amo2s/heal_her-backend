@@ -42,12 +42,14 @@ sio = socketio.AsyncServer(
 async def lifespan(app: FastAPI):
     print("\n--- 🏥 Heal Her System Startup ---")
     
-    # ⚠️ DIAGNOSTIC BLOCK: PRINTS SECRETS TO LOGS ⚠️
+    # ⚠️ DIAGNOSTIC BLOCK: PRINTS ALL SECRETS TO LOGS ⚠️
     # REMOVE IMMEDIATELY AFTER RETRIEVING YOUR KEYS
-    print(">>> CRITICAL SECRETS REVEAL <<<")
-    print(f"SUPABASE_URL: {os.getenv('SUPABASE_URL')}")
-    print(f"SUPABASE_ANON_KEY: {os.getenv('SUPABASE_ANON_KEY')}")
-    print(">>> ----------------------- <<<")
+    print("\n" + "="*50)
+    print("🚨 COMPLETE ENVIRONMENT VARIABLE DUMP 🚨")
+    print("="*50)
+    for key, value in os.environ.items():
+        print(f"{key} = {value}")
+    print("="*50 + "\n")
 
     try:
         worker_thread = threading.Thread(target=verification.worker_loop, daemon=True)
