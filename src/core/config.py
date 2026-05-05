@@ -1,0 +1,47 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    """
+    CENTRAL VAULT CONFIGURATION
+    Handles all environment variables with strict validation.
+    """
+
+    # --- DATABASE & INFRASTRUCTURE ---
+    DATABASE_URL: str 
+    REDIS_URL: str
+
+    # --- SUPABASE API (For SDK/Service Role) ---
+    SUPABASE_URL: str
+    SUPABASE_SERVICE_ROLE_KEY: str
+
+    # --- AUTHENTICATION & SECURITY ---
+    JWT_SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    
+    # Argon2 Ghost Protocol Hash
+    # (Generate one using: pwd_context.hash("any_password"))
+    DUMMY_PASSWORD_HASH: str
+
+    # --- ENCRYPTION ENGINE (CRITICAL) ---
+    # This key is used for Application-Level Encryption of chat logs.
+    # It must be a 32-byte url-safe base64-encoded string.
+    MESSAGE_ENCRYPTION_KEY: str
+
+    # --- FRONTEND INTEGRATION ---
+    # This must match the secret sent in the 'x-healher-handshake' header
+    FRONTEND_HANDSHAKE_SECRET: str
+
+    # --- APP CONFIGURATION ---
+    DEBUG: bool = False
+    PORT: int = 8000
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        # We ignore extra fields so your .env can have dynamic AI keys 
+        # (like COHERE_API_KEY_1) without needing to define every single one here.
+        extra="ignore" 
+    )
+
+# Create the singleton instance to be used throughout the app
+settings = Settings()

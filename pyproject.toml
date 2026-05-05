@@ -1,0 +1,24 @@
+[project]
+name = "heal-her-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.18.4",
+    "asyncpg>=0.31.0",
+    "cryptography>=47.0.0",
+    "fastapi[standard]>=0.136.1",
+    "granian>=2.7.4",
+    "guardrails-ai>=0.10.0",
+    "passlib[argon2]>=1.7.4",
+    "pii-masker>=0.1.2",
+    "psycopg2-binary>=2.9.12",
+    "pydantic-settings>=2.14.0",
+    "python-dotenv>=1.2.2",
+    "python-jose[cryptography]>=3.5.0",
+    "redis>=7.4.0",
+    "strawberry-graphql[fastapi]>=0.315.3",
+    "supabase>=2.29.0",
+    "uuid6>=2025.0.1",
+]
