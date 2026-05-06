@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
 
 class Settings(BaseSettings):
     """
@@ -14,10 +15,18 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
 
-    # --- AUTHENTICATION & SECURITY ---
-    JWT_SECRET_KEY: str
+    # --- AUTHENTICATION & SECURITY (DUAL-DOMAIN) ---
     ALGORITHM: str = "HS256"
+    
+    # Standard Dashboard Secret
+    JWT_SECRET_KEY: str
+    
+    # THE EXTREMIST UPGRADE: Dedicated Management Secret
+    # If not provided in .env, you can default it or leave it required for maximum safety.
+    MANAGEMENT_JWT_SECRET_KEY: str 
+    
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # Argon2 Ghost Protocol Hash
     # (Generate one using: pwd_context.hash("any_password"))

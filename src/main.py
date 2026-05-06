@@ -10,6 +10,11 @@ from auth.graphql.mutations import AuthMutation
 from db import get_db
 from core.config import settings
 
+# --- NEW: IMPORT MANAGEMENT AUTH (Signup & Login) ---
+# Adjust the import paths if your signup module is named differently
+from management.auth.login.mutations import AdminLoginMutation
+from management.auth.signup.mutations import StaffAuthMutation
+
 # --- NEW: IMPORT THE KIDS AI BUDDY ECOSYSTEM ---
 from kids.ai_buddy.handlers.ai_buddy import router as ai_buddy_rest_router
 from kids.ai_buddy.graphql.router import graphql_router as ai_buddy_graphql_router
@@ -24,7 +29,16 @@ class Query:
         return "Heal Her Vault is online and fortified."
 
 # ---------------------------------------------------------
-# 3. THE SCHEMA CONFIGURATION
+# 3. ROOT MUTATION (The Aggregator)
+# ---------------------------------------------------------
+# Multiple inheritance merges all distinct mutation classes into a single 
+# unified GraphQL endpoint without duplicating any code.
+@strawberry.type
+class RootMutation(AuthMutation,StaffAuthMutation, AdminLoginMutation):
+    pass
+
+# ---------------------------------------------------------
+# 4. THE SCHEMA CONFIGURATION
 # ---------------------------------------------------------
 # Using our vault settings! If DEBUG is False, IS_PROD is True.
 IS_PROD = not settings.DEBUG
@@ -34,12 +48,12 @@ schema_extensions = [DisableIntrospection()] if IS_PROD else []
 
 schema = strawberry.Schema(
     query=Query, 
-    mutation=AuthMutation,
+    mutation=RootMutation, # Replaced AuthMutation with the aggregated RootMutation
     extensions=schema_extensions 
 )
 
 # ---------------------------------------------------------
-# 4. THE CONTEXT GETTER (The Guard's Eyes & The DB Bridge)
+# 5. THE CONTEXT GETTER (The Guard's Eyes & The DB Bridge)
 # ---------------------------------------------------------
 async def get_context(
     request: Request, 
@@ -47,11 +61,14 @@ async def get_context(
 ):
     return {
         "request": request,
+        # Kept for backward compatibility so your existing AuthMutation doesn't break
         "session": db, 
+        # Added strictly for Management Auth logic which expects "db"
+        "db": db,      
     }
 
 # ---------------------------------------------------------
-# 5. SECURITY MIDDLEWARE (The Header Shield)
+# 6. SECURITY MIDDLEWARE (The Header Shield)
 # ---------------------------------------------------------
 class SecurityHeaderMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -63,7 +80,7 @@ class SecurityHeaderMiddleware(BaseHTTPMiddleware):
         return response
 
 # ---------------------------------------------------------
-# 6. INITIALIZE THE FORTRESS
+# 7. INITIALIZE THE FORTRESS
 # ---------------------------------------------------------
 app = FastAPI(
     title="Heal Her Backend",
@@ -72,8 +89,7 @@ app = FastAPI(
     redoc_url=None if IS_PROD else "/redoc"
 )
 
-# CRITICAL UPDATE: Added GET, OPTIONS, Authorization, and Accept 
-# to support cross-origin SSE streaming and JWT verification.
+# CORS kept strictly to your specifications (Same Origin logic)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -87,7 +103,7 @@ app.add_middleware(
 
 app.add_middleware(SecurityHeaderMiddleware)
 
-# --- THE CORE GRAPHQL ROUTE (Auth/Main) ---
+# --- THE CORE GRAPHQL ROUTE (Unified Auth/Main) ---
 graphql_app = GraphQLRouter(
     schema, 
     context_getter=get_context,
@@ -96,13 +112,12 @@ graphql_app = GraphQLRouter(
 app.include_router(graphql_app, prefix="/graphql")
 
 
-# --- NEW: MOUNT THE KIDS AI BUDDY ECOSYSTEM ---
+# --- MOUNT THE KIDS AI BUDDY ECOSYSTEM ---
 
 # 1. The REST endpoint for live SSE Streaming (/kids/ai-buddy/chat/stream)
 app.include_router(ai_buddy_rest_router)
 
 # 2. The separate, dedicated GraphQL endpoint for Kids Management (/kids/ai-buddy/graphql)
-# (Path is natively handled inside the router we built)
 app.include_router(ai_buddy_graphql_router)
 
 

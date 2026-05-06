@@ -23,6 +23,8 @@ from db import Base # Ensure this is the unified Base you corrected
 from auth.models.signup import User 
 from kids.ai_buddy.models import ChatSession, ChatMessage
 from kids.videos.models import KidVideo, KidVideoProgress  # <--- REGISTERED FOR ISOLATION
+# NEW: Registering the Management Fortress models
+from management.auth.signup.models import Staff
 # ---------------------------
 
 config = context.config
@@ -30,7 +32,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# THE DETECTOR: Enhanced to verify your isolated video tables
+# THE DETECTOR: Enhanced to verify your isolated video tables and new staff tables
 print(f"DEBUG: Tables detected by Alembic: {Base.metadata.tables.keys()}")
 
 target_metadata = Base.metadata
