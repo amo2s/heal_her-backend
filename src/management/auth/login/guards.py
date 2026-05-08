@@ -6,8 +6,12 @@ from strawberry.permission import BasePermission
 from strawberry.types import Info
 from fastapi import Request
 from redis.asyncio import Redis, from_url
+from jose import jwt, JWTError
+from graphql import GraphQLError
+from sqlalchemy.future import select # [NEW] Required for async database queries
 
 from core.config import settings
+from management.auth.signup.models import Staff
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,9 @@ valkey_client: Redis = from_url(
     retry_on_timeout=True
 )
 
+# =====================================================================
+# 1. THE LOGIN BOUNCER
+# =====================================================================
 class LoginBouncerGuard(BasePermission):
     """
     The Extremist Perimeter Bouncer for Management Authentication.
@@ -129,4 +136,65 @@ class LoginBouncerGuard(BasePermission):
         }
 
         # We MUST return True here to pass the Guard, so the resolver can execute Ghost/Error logic.
+        return True
+
+
+# =====================================================================
+# 2. THE ACTIVE STAFF GUARD (Dashboard Gatekeeper)
+# =====================================================================
+class IsActiveStaff(BasePermission):
+    """
+    The Command Center Perimeter.
+    Verifies JWT using the Management Secret, checks ACTIVE database status, 
+    and injects identity into context for Zero-Query resolution.
+    """
+    message = "Unauthorized or inactive session."
+
+    async def has_permission(self, source: typing.Any, info: Info, **kwargs) -> bool:
+        request: Request = info.context.get("request")
+        db = info.context.get("db")
+
+        # --- LAYER 1: EXTRACT TOKEN ---
+        token = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+        else:
+            # [FIX] Look for the exact cookie name Next.js is setting
+            token = request.cookies.get("admin-access-token")
+
+        if not token:
+            raise GraphQLError("Authentication token missing. Access denied.")
+
+        # --- LAYER 2: CRYPTOGRAPHIC VERIFICATION ---
+        try:
+            payload = jwt.decode(
+                token, 
+                settings.MANAGEMENT_JWT_SECRET_KEY, 
+                algorithms=["HS256"]
+            )
+            # This 'sub' claim will now correctly match the 'sub' we generate in TokenForge
+            staff_id = payload.get("sub")
+            if not staff_id:
+                raise GraphQLError("Invalid token payload structure.")
+        except JWTError:
+            raise GraphQLError("Session expired or token invalid. Please log in again.")
+
+        # --- LAYER 3: DATABASE & STATUS VERIFICATION ---
+        # [FIX] Refactored to properly await the AsyncSession execution
+        stmt = select(Staff).where(Staff.id == staff_id)
+        result = await db.execute(stmt)
+        staff = result.scalar_one_or_none()
+
+        if not staff:
+            raise GraphQLError("Staff identity not found in system.")
+
+        status_name = getattr(staff.status, "name", str(staff.status)).upper()
+        if status_name != "ACTIVE":
+            logger.warning(f"Dashboard access blocked for {staff.email}. Status: {status_name}")
+            raise GraphQLError("Account is currently PENDING or SUSPENDED. A Super Admin must approve your access.")
+
+        # --- LAYER 4: CONTEXT INJECTION (The Siphon Target) ---
+        info.context["current_staff"] = staff
+        
         return True

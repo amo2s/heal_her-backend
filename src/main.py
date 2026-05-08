@@ -10,20 +10,23 @@ from auth.graphql.mutations import AuthMutation
 from db import get_db
 from core.config import settings
 
-# --- NEW: IMPORT MANAGEMENT AUTH (Signup & Login) ---
-# Adjust the import paths if your signup module is named differently
+# --- IMPORT MANAGEMENT AUTH (Signup & Login) ---
 from management.auth.login.mutations import AdminLoginMutation
 from management.auth.signup.mutations import StaffAuthMutation
 
-# --- NEW: IMPORT THE KIDS AI BUDDY ECOSYSTEM ---
+# --- NEW: IMPORT MANAGEMENT DASHBOARD (The Core Operations) ---
+from management.dashboard.resolvers import DashboardQuery
+
+# --- IMPORT THE KIDS AI BUDDY ECOSYSTEM ---
 from kids.ai_buddy.handlers.ai_buddy import router as ai_buddy_rest_router
 from kids.ai_buddy.graphql.router import graphql_router as ai_buddy_graphql_router
 
 # ---------------------------------------------------------
-# 2. THE DUMMY QUERY (Required by GraphQL)
+# 2. ROOT QUERY (The Aggregator)
 # ---------------------------------------------------------
+# Inheriting DashboardQuery automatically mounts getMe into the global schema
 @strawberry.type
-class Query:
+class RootQuery(DashboardQuery):
     @strawberry.field
     def health_check(self) -> str:
         return "Heal Her Vault is online and fortified."
@@ -34,7 +37,7 @@ class Query:
 # Multiple inheritance merges all distinct mutation classes into a single 
 # unified GraphQL endpoint without duplicating any code.
 @strawberry.type
-class RootMutation(AuthMutation,StaffAuthMutation, AdminLoginMutation):
+class RootMutation(AuthMutation, StaffAuthMutation, AdminLoginMutation):
     pass
 
 # ---------------------------------------------------------
@@ -47,8 +50,8 @@ IS_PROD = not settings.DEBUG
 schema_extensions = [DisableIntrospection()] if IS_PROD else []
 
 schema = strawberry.Schema(
-    query=Query, 
-    mutation=RootMutation, # Replaced AuthMutation with the aggregated RootMutation
+    query=RootQuery, 
+    mutation=RootMutation, 
     extensions=schema_extensions 
 )
 
@@ -63,7 +66,7 @@ async def get_context(
         "request": request,
         # Kept for backward compatibility so your existing AuthMutation doesn't break
         "session": db, 
-        # Added strictly for Management Auth logic which expects "db"
+        # Added strictly for Management Auth/Dashboard logic which expects "db"
         "db": db,      
     }
 

@@ -188,7 +188,9 @@ class StaffLoginService:
             settings.MANAGEMENT_JWT_SECRET_KEY, 
             algorithms=["HS256"]
         )
-        staff_id = payload.get("sid")
+        
+        # [FIX] Read from "sub" instead of "sid" to match the TokenForge output
+        staff_id = payload.get("sub")
 
         # C. VERIFICATION OF CLEARANCE (Status-Blind Check)
         # Even if the token is valid, we must ensure an Admin didn't manually 

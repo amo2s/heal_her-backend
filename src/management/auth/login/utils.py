@@ -39,7 +39,11 @@ class TokenForge:
         LAYER 3: ENVIRONMENTAL PINNING
         Creates a one-way hash of the user's physical digital footprint.
         """
-        raw_fingerprint = f"{ip}|{user_agent}|{MANAGEMENT_SECRET[-10:]}"
+        # [FIX] Localhost Normalization: Prevents Next.js proxy from breaking the 
+        # hash by randomly toggling between IPv4 (127.0.0.1) and IPv6 (::1).
+        normalized_ip = "localhost" if ip in ("::1", "127.0.0.1") else ip
+        
+        raw_fingerprint = f"{normalized_ip}|{user_agent}|{MANAGEMENT_SECRET[-10:]}"
         return hashlib.sha256(raw_fingerprint.encode()).hexdigest()
 
     @classmethod
@@ -61,9 +65,10 @@ class TokenForge:
         refresh_exp = now + timedelta(days=7)
 
         # LAYER 5: OBFUSCATED CLAIMS
-        # sid = Staff ID | env = Fingerprint | typ = Token Type | jti = Unique ID
+        # sub = Staff ID | env = Fingerprint | typ = Token Type | jti = Unique ID
+        # [FIX] Swapped "sid" to "sub" to align perfectly with the IsActiveStaff Guard.
         access_payload = {
-            "sid": staff_id,
+            "sub": staff_id,
             "env": env_hash,
             "typ": "m_acc",
             "jti": access_jti,
@@ -72,7 +77,7 @@ class TokenForge:
         }
         
         refresh_payload = {
-            "sid": staff_id,
+            "sub": staff_id,
             "env": env_hash,
             "typ": "m_ref",
             "jti": refresh_jti,
@@ -123,7 +128,8 @@ class TokenForge:
         if payload.get("typ") != "m_ref":
             raise ValueError("Invalid token architecture.")
 
-        staff_id = payload.get("sid")
+        # [FIX] Read from "sub" instead of "sid"
+        staff_id = payload.get("sub")
         old_jti = payload.get("jti")
         token_env = payload.get("env")
 
@@ -179,4 +185,5 @@ class TokenForge:
         if not is_active:
             raise ValueError("Session manually revoked.")
 
-        return payload.get("sid")
+        # [FIX] Read from "sub" instead of "sid"
+        return payload.get("sub")
