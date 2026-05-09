@@ -14,12 +14,16 @@ from core.config import settings
 from management.auth.login.mutations import AdminLoginMutation
 from management.auth.signup.mutations import StaffAuthMutation
 
-# --- NEW: IMPORT MANAGEMENT DASHBOARD (The Core Operations) ---
+# --- IMPORT MANAGEMENT DASHBOARD (The Core Operations) ---
 from management.dashboard.resolvers import DashboardQuery
 
 # --- IMPORT THE KIDS AI BUDDY ECOSYSTEM ---
 from kids.ai_buddy.handlers.ai_buddy import router as ai_buddy_rest_router
 from kids.ai_buddy.graphql.router import graphql_router as ai_buddy_graphql_router
+
+# --- NEW: IMPORT THE TEENS HEAL AI ECOSYSTEM ---
+from teens.heal_ai.handlers import router as heal_ai_rest_router
+from teens.heal_ai.router import graphql_router as heal_ai_graphql_router
 
 # ---------------------------------------------------------
 # 2. ROOT QUERY (The Aggregator)
@@ -122,6 +126,15 @@ app.include_router(ai_buddy_rest_router)
 
 # 2. The separate, dedicated GraphQL endpoint for Kids Management (/kids/ai-buddy/graphql)
 app.include_router(ai_buddy_graphql_router)
+
+
+# --- MOUNT THE TEENS HEAL AI ECOSYSTEM ---
+
+# 1. The REST endpoint for live SSE Streaming (/teens/heal-ai/chat/stream)
+app.include_router(heal_ai_rest_router)
+
+# 2. The separate, dedicated GraphQL endpoint for Teens Management (/teens/heal-ai/graphql)
+app.include_router(heal_ai_graphql_router)
 
 
 @app.get("/")

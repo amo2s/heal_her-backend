@@ -22,7 +22,7 @@ from db import Base # Ensure this is the unified Base you corrected
 # Importing models registers them with Base.metadata for Autogenerate to work
 from auth.models.signup import User 
 from kids.ai_buddy.models import ChatSession, ChatMessage
-from kids.videos.models import KidVideo, KidVideoProgress  # <--- REGISTERED FOR ISOLATION
+from teens.heal_ai.models import TeensChatSession, TeensChatMessage
 # NEW: Registering the Management Fortress models
 from management.auth.signup.models import Staff
 # ---------------------------
