@@ -41,7 +41,7 @@ def analyze_payload_safety(payload: str) -> None:
 def decode_and_verify_teen_token(token: str) -> Dict[str, Any]:
     """
     Decodes the actual JWT using your vault settings.
-    Strictly enforces the 'teen' role assigned during signup.
+    Strictly enforces the 'teen' role assigned during signup and verifies audience.
     """
     try:
         # CLEANUP: Remove potential extra quotes (common in proxy/storage transfers)
@@ -51,9 +51,8 @@ def decode_and_verify_teen_token(token: str) -> Dict[str, Any]:
             sanitized_token, 
             settings.JWT_SECRET_KEY, 
             algorithms=[settings.ALGORITHM],
-            # If using Supabase, 'aud' is usually 'authenticated'. 
-            # We allow it to be flexible here to avoid "Invalid Audience" errors.
-            options={"verify_aud": False} 
+            # THE FIX: We now strictly enforce the "teens" audience to match login.py
+            audience="teens" 
         )
         
         # Explicitly read the role injected by the auth service
@@ -72,6 +71,11 @@ def decode_and_verify_teen_token(token: str) -> Dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, 
             detail="Session expired. Please log in again."
+        )
+    except jwt.InvalidAudienceError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-Domain Spoofing Blocked: Token does not belong to the teens sector."
         )
     except jwt.InvalidTokenError as e:
         # Debugging: Log the error to see why verification failed (Secret mismatch, etc.)

@@ -16,7 +16,7 @@ def _get_secret(domain: str) -> str:
 # =====================================================================
 # TOKEN GENERATION (ISSUANCE)
 # =====================================================================
-def create_access_token(data: dict, domain: str = "kids"):
+def create_access_token(data: dict, domain: str):
     """
     Generates a short-lived access token strictly bound to a specific domain.
     """
@@ -29,7 +29,7 @@ def create_access_token(data: dict, domain: str = "kids"):
     })
     return jwt.encode(to_encode, _get_secret(domain), algorithm=settings.ALGORITHM)
 
-def create_refresh_token(data: dict, domain: str = "kids"):
+def create_refresh_token(data: dict, domain: str):
     """Generates a long-lived refresh token strictly bound to a specific domain."""
     to_encode = data.copy()
     refresh_days = getattr(settings, 'REFRESH_TOKEN_EXPIRE_DAYS', 7)
@@ -44,7 +44,7 @@ def create_refresh_token(data: dict, domain: str = "kids"):
 # =====================================================================
 # TOKEN EXTRACTION & VALIDATION (THE DETECTOR)
 # =====================================================================
-def verify_refresh_token(token: str, expected_domain: str = "kids"):
+def verify_refresh_token(token: str, expected_domain: str):
     """Verifies the token, ensuring it hasn't been spoofed across domains."""
     try:
         payload = jwt.decode(
@@ -59,7 +59,7 @@ def verify_refresh_token(token: str, expected_domain: str = "kids"):
     except jwt.PyJWTError:
         return None
 
-async def get_current_user_id(request: Request, expected_domain: str = "management") -> str:
+async def get_current_user_id(request: Request, expected_domain: str) -> str:
     """
     The Extraction Engine used by guards.py.
     Physically strips the token from the headers and aggressively validates its DNA.

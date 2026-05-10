@@ -140,8 +140,9 @@ async def execute_login(
         "dashboard": frontend_dashboard_path
     }
 
-    access_token = create_access_token(data=token_payload)
-    refresh_token = create_refresh_token(data=token_payload)
+    # THE FIX: Inject the resolved domain to sync with the new security.py requirements
+    access_token = create_access_token(data=token_payload, domain=frontend_dashboard_path)
+    refresh_token = create_refresh_token(data=token_payload, domain=frontend_dashboard_path)
 
     # ---------------------------------------------------------
     # 7. PACKAGE THE SAFE RESPONSE

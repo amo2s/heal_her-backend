@@ -7,9 +7,13 @@ Provides both the REST Dependency and the GraphQL Dependency.
 
 import re
 import jwt
+import logging # ADDED: For token debugging to match the new architecture
 from typing import Callable, Any, Dict
 from fastapi import HTTPException, status, Request
 from core.config import settings
+
+# ADDED: Setup logging to catch token issues in development
+logger = logging.getLogger("HEAL_SECURITY_GUARD_KIDS")
 
 # ---------------------------------------------------------
 # 1. CONTENT SAFETY ENGINE (Heuristic Checks)
@@ -36,18 +40,24 @@ def analyze_payload_safety(payload: str) -> None:
 def decode_and_verify_kids_token(token: str) -> Dict[str, Any]:
     """
     Decodes the actual JWT using your vault settings.
-    Strictly enforces the 'kid' role assigned during signup.
+    Strictly enforces the 'kid' role assigned during signup and validates audience.
     """
     try:
+        # SECURITY FIX 1: Clean up token to prevent parsing errors from proxy/SSE transfers
+        sanitized_token = token.strip().replace('"', '').replace("'", "")
+
         payload = jwt.decode(
-            token, 
+            sanitized_token, 
             settings.JWT_SECRET_KEY, 
-            algorithms=[settings.ALGORITHM]
+            algorithms=[settings.ALGORITHM],
+            # SECURITY FIX 2: Strictly enforce the 'kids' audience to align with the new login.py requirements
+            audience="kids"
         )
         
         # ELITE UPGRADE: We now explicitly read the role injected by login.py
         token_role = payload.get("role")
         
+        # LOGIC CHECK: Match the dashboard role ('kid')
         if token_role != "kid":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -58,7 +68,15 @@ def decode_and_verify_kids_token(token: str) -> Dict[str, Any]:
         
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired.")
-    except jwt.InvalidTokenError:
+    except jwt.InvalidAudienceError:
+        # SECURITY FIX 3: Catch cross-domain spoofing if a teen or admin tries to access the kids route
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-Domain Spoofing Blocked: Token does not belong to the kids sector."
+        )
+    except jwt.InvalidTokenError as e:
+        # SECURITY FIX 4: Added logging to expose the exact reason for a 401 failure in the console
+        logger.error(f"JWT Verification Failed: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid security token.")
 
 

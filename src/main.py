@@ -17,13 +17,15 @@ from management.auth.signup.mutations import StaffAuthMutation
 # --- IMPORT MANAGEMENT DASHBOARD (The Core Operations) ---
 from management.dashboard.resolvers import DashboardQuery
 
-# --- IMPORT THE KIDS AI BUDDY ECOSYSTEM ---
+# --- IMPORT THE KIDS ECOSYSTEM ---
 from kids.ai_buddy.handlers.ai_buddy import router as ai_buddy_rest_router
 from kids.ai_buddy.graphql.router import graphql_router as ai_buddy_graphql_router
+from kids.dashboard.router import kids_dashboard_router as kids_main_dashboard_router
 
-# --- NEW: IMPORT THE TEENS HEAL AI ECOSYSTEM ---
+# --- IMPORT THE TEENS ECOSYSTEM ---
 from teens.heal_ai.handlers import router as heal_ai_rest_router
 from teens.heal_ai.router import graphql_router as heal_ai_graphql_router
+from teens.dashboard.router import teens_dashboard_router as teens_main_dashboard_router
 
 # ---------------------------------------------------------
 # 2. ROOT QUERY (The Aggregator)
@@ -119,21 +121,15 @@ graphql_app = GraphQLRouter(
 app.include_router(graphql_app, prefix="/graphql")
 
 
-# --- MOUNT THE KIDS AI BUDDY ECOSYSTEM ---
-
-# 1. The REST endpoint for live SSE Streaming (/kids/ai-buddy/chat/stream)
+# --- MOUNT THE KIDS ECOSYSTEM ---
+app.include_router(kids_main_dashboard_router)
 app.include_router(ai_buddy_rest_router)
-
-# 2. The separate, dedicated GraphQL endpoint for Kids Management (/kids/ai-buddy/graphql)
 app.include_router(ai_buddy_graphql_router)
 
 
-# --- MOUNT THE TEENS HEAL AI ECOSYSTEM ---
-
-# 1. The REST endpoint for live SSE Streaming (/teens/heal-ai/chat/stream)
+# --- MOUNT THE TEENS ECOSYSTEM ---
+app.include_router(teens_main_dashboard_router)
 app.include_router(heal_ai_rest_router)
-
-# 2. The separate, dedicated GraphQL endpoint for Teens Management (/teens/heal-ai/graphql)
 app.include_router(heal_ai_graphql_router)
 
 
