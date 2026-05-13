@@ -5,54 +5,46 @@ from strawberry.fastapi import GraphQLRouter
 import strawberry
 from strawberry.extensions import DisableIntrospection
 
-# --- 1. IMPORT YOUR SECURE MUTATIONS & DB ---
+# --- 1. CORE INFRASTRUCTURE ---
 from auth.graphql.mutations import AuthMutation
 from db import get_db
 from core.config import settings
 
-# --- IMPORT MANAGEMENT AUTH (Signup & Login) ---
+# --- MANAGEMENT ECOSYSTEM ---
 from management.auth.login.mutations import AdminLoginMutation
 from management.auth.signup.mutations import StaffAuthMutation
-
-# --- IMPORT MANAGEMENT DASHBOARD (The Core Operations) ---
 from management.dashboard.resolvers import DashboardQuery
 
-# --- IMPORT THE KIDS ECOSYSTEM ---
+# --- KIDS ECOSYSTEM ---
 from kids.ai_buddy.handlers.ai_buddy import router as ai_buddy_rest_router
 from kids.ai_buddy.graphql.router import graphql_router as ai_buddy_graphql_router
 from kids.dashboard.router import kids_dashboard_router as kids_main_dashboard_router
 
-# --- IMPORT THE TEENS ECOSYSTEM ---
+# --- TEENS ECOSYSTEM ---
 from teens.heal_ai.handlers import router as heal_ai_rest_router
 from teens.heal_ai.router import graphql_router as heal_ai_graphql_router
 from teens.dashboard.router import teens_dashboard_router as teens_main_dashboard_router
 
+# --- YOUNG ADULTS ECOSYSTEM (Updated Paths) ---
+# [FIXED]: Updated to 'young_adults' and included the missing GraphQL router
+from young_adult.dashboard.router import young_adult_dashboard_router as ya_main_dashboard_router
+from young_adult.heal_ai.handlers import router as ya_heal_ai_rest_router
+from young_adult.heal_ai.router import graphql_router as ya_heal_ai_graphql_router
+
 # ---------------------------------------------------------
-# 2. ROOT QUERY (The Aggregator)
+# 2. SCHEMA AGGREGATION
 # ---------------------------------------------------------
-# Inheriting DashboardQuery automatically mounts getMe into the global schema
 @strawberry.type
 class RootQuery(DashboardQuery):
     @strawberry.field
     def health_check(self) -> str:
         return "Heal Her Vault is online and fortified."
 
-# ---------------------------------------------------------
-# 3. ROOT MUTATION (The Aggregator)
-# ---------------------------------------------------------
-# Multiple inheritance merges all distinct mutation classes into a single 
-# unified GraphQL endpoint without duplicating any code.
 @strawberry.type
 class RootMutation(AuthMutation, StaffAuthMutation, AdminLoginMutation):
     pass
 
-# ---------------------------------------------------------
-# 4. THE SCHEMA CONFIGURATION
-# ---------------------------------------------------------
-# Using our vault settings! If DEBUG is False, IS_PROD is True.
 IS_PROD = not settings.DEBUG
-
-# The correct extension to lock down the schema
 schema_extensions = [DisableIntrospection()] if IS_PROD else []
 
 schema = strawberry.Schema(
@@ -62,23 +54,15 @@ schema = strawberry.Schema(
 )
 
 # ---------------------------------------------------------
-# 5. THE CONTEXT GETTER (The Guard's Eyes & The DB Bridge)
+# 3. CONTEXT & MIDDLEWARE
 # ---------------------------------------------------------
-async def get_context(
-    request: Request, 
-    db = Depends(get_db) 
-):
+async def get_context(request: Request, db = Depends(get_db)):
     return {
         "request": request,
-        # Kept for backward compatibility so your existing AuthMutation doesn't break
         "session": db, 
-        # Added strictly for Management Auth/Dashboard logic which expects "db"
         "db": db,      
     }
 
-# ---------------------------------------------------------
-# 6. SECURITY MIDDLEWARE (The Header Shield)
-# ---------------------------------------------------------
 class SecurityHeaderMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
@@ -89,7 +73,7 @@ class SecurityHeaderMiddleware(BaseHTTPMiddleware):
         return response
 
 # ---------------------------------------------------------
-# 7. INITIALIZE THE FORTRESS
+# 4. APP INITIALIZATION
 # ---------------------------------------------------------
 app = FastAPI(
     title="Heal Her Backend",
@@ -98,7 +82,6 @@ app = FastAPI(
     redoc_url=None if IS_PROD else "/redoc"
 )
 
-# CORS kept strictly to your specifications (Same Origin logic)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -112,7 +95,13 @@ app.add_middleware(
 
 app.add_middleware(SecurityHeaderMiddleware)
 
-# --- THE CORE GRAPHQL ROUTE (Unified Auth/Main) ---
+# ---------------------------------------------------------
+# 5. ABSOLUTE ROUTE MOUNTING (Option C)
+# ---------------------------------------------------------
+# Under Option C, we remove prefixes here. 
+# Sub-routers MUST define their full paths (e.g., path="/young_adults/...")
+
+# Global Auth/Main
 graphql_app = GraphQLRouter(
     schema, 
     context_getter=get_context,
@@ -120,18 +109,21 @@ graphql_app = GraphQLRouter(
 )
 app.include_router(graphql_app, prefix="/graphql")
 
-
-# --- MOUNT THE KIDS ECOSYSTEM ---
+# Kids 
 app.include_router(kids_main_dashboard_router)
 app.include_router(ai_buddy_rest_router)
 app.include_router(ai_buddy_graphql_router)
 
-
-# --- MOUNT THE TEENS ECOSYSTEM ---
+# Teens
 app.include_router(teens_main_dashboard_router)
 app.include_router(heal_ai_rest_router)
 app.include_router(heal_ai_graphql_router)
 
+# Young Adults (Complete mounting)
+# [FIXED]: All prefixes removed. Full paths are handled in the specific router files.
+app.include_router(ya_main_dashboard_router)
+app.include_router(ya_heal_ai_rest_router)
+app.include_router(ya_heal_ai_graphql_router)
 
 @app.get("/")
 async def root():

@@ -25,7 +25,7 @@ from kids.ai_buddy.models import ChatSession, ChatMessage
 from teens.heal_ai.models import TeensChatSession, TeensChatMessage
 # NEW: Registering the Management Fortress models
 from management.auth.signup.models import Staff
-# ---------------------------
+from young_adult.heal_ai.models import YoungAdultChatSession, YoungAdultChatMessage
 
 config = context.config
 

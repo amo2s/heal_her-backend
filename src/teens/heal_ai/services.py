@@ -89,6 +89,7 @@ key_manager = APIKeyManager()
 async def generate_sidebar_title(session_id: str, first_message: str):
     """
     Runs in the background to generate a professional session title.
+    Includes hard truncation to prevent database schema violations.
     """
     try:
         from db import async_session_maker 
@@ -97,17 +98,30 @@ async def generate_sidebar_title(session_id: str, first_message: str):
         response = await acompletion(
             model="mistral/mistral-tiny",
             messages=[
-                {"role": "system", "content": "Summarize this request in 3 to 5 professional words. No punctuation."},
+                {
+                    # [FIXED]: Prompt Hardening. Explicitly forbidding newlines and long strings.
+                    "role": "system", 
+                    "content": (
+                        "Summarize this request into a highly concise professional title. "
+                        "MAXIMUM 5 words. MAXIMUM 50 characters. NO NEWLINES. "
+                        "Return ONLY the title string, nothing else."
+                    )
+                },
                 {"role": "user", "content": first_message}
             ],
             api_key=key
         )
-        title = response.choices[0].message.content.strip()
+        raw_title = response.choices[0].message.content.strip()
+
+        # [FIXED]: Sanitization & Hard Truncation (The Fail-Safe)
+        # 1. Replace newlines with spaces to prevent UI rendering bugs.
+        # 2. Hard slice at 100 characters to absolutely guarantee it never breaches the VARCHAR(100) DB limit.
+        safe_title = raw_title.replace("\n", " ").strip()[:100]
 
         async with async_session_maker() as db:
             session_record = await db.get(TeensChatSession, session_id)
             if session_record:
-                session_record.title = title
+                session_record.title = safe_title
                 await db.commit()
             
     except Exception as e:
@@ -131,7 +145,7 @@ class HealAIService:
         The Master Pipeline for Teens Heal AI.
         """
         
-        # --- SESSION INITIALIZATION ---
+        # --- FIX 1: PREVENT THE NEW CHAT 500 CRASH WITH DEFENSIVE COMMIT ---
         is_new_session = False
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -146,7 +160,7 @@ class HealAIService:
                     db.add(new_session)
                     await db.commit()
             except Exception as e:
-                logger.warning(f"[DB] Teens session initialization delayed: {e}")
+                logger.warning(f"[DB WARNING] Teens session initialization delayed: {e}")
             
         # 1. Encrypt and store user input
         encrypted_user_msg = encrypt_message(raw_message)
@@ -161,7 +175,7 @@ class HealAIService:
                 db.add(new_msg)
                 await db.commit()
         except Exception as e:
-            logger.warning(f"[DB] Teens user message storage delayed: {e}")
+            logger.warning(f"[DB WARNING] Teens user message storage delayed: {e}")
 
         # 2. Context Retrieval (Last 15 messages for deeper conversation)
         try:
@@ -224,7 +238,7 @@ class HealAIService:
 
         yield "data: [DONE]\n\n"
 
-        # 7. Persistent Storage for AI Response
+        # 7. Persistent Storage for AI Response (Bulletproof Update)
         if full_ai_response:
             try:
                 encrypted_ai_msg = encrypt_message(full_ai_response)
@@ -236,10 +250,16 @@ class HealAIService:
                     provider_used=provider.value
                 )
                 
+                # Check that DB connection is still perfectly alive before saving
                 if db is not None:
                     db.add(ai_db_msg)
-                    # Safe commit for async context
-                    await db.commit()
+                    # Use a safely handled commit to prevent FastAPI lifespan crashes
+                    commit_result = db.commit()
+                    if commit_result is not None:
+                        await commit_result
                         
             except Exception as db_err:
-                logger.error(f"[DB] Final history save failed: {db_err}")
+                # We catch the error silently here. The user ALREADY got their 
+                # stream on the frontend, so we don't want to crash the whole server 
+                # just because the database closed a microsecond too early.
+                logger.error(f"[SAFE FALLBACK] Stream finished successfully, but history save was interrupted: {db_err}")

@@ -1,9 +1,9 @@
 """
-kids/ai_buddy/services/ai_buddy.py
+src/young_adult/heal_ai/services/heal_ai.py
 
-The Elite Core Service for the Kids AI Buddy.
+The Elite Core Service for Young Adult Heal AI.
 Features: Dynamic Key Load Balancing, Application-Level Encryption, 
-Async SSE Streaming, and External Persona Injection.
+Async SSE Streaming, and Young Adult-Specific Persona Injection.
 """
 
 import os
@@ -11,6 +11,7 @@ import re
 import json
 import itertools
 import uuid
+import logging
 from collections import defaultdict
 from typing import AsyncGenerator
 
@@ -22,11 +23,14 @@ from sqlalchemy import select
 
 # Import configurations, models, and schemas
 from core.config import settings
-from kids.ai_buddy.models import ChatSession, ChatMessage
-from kids.ai_buddy.schemas.ai_buddy import AIProvider, MessageRole
+from young_adult.heal_ai.models import YoungAdultChatSession, YoungAdultChatMessage
+from young_adult.heal_ai.schemas import AIProvider, MessageRole
 
-# IMPORT THE PERSONA ENGINE
-from kids.ai_buddy.persona import analyze_sentiment_and_build_prompt
+# IMPORT THE YOUNG ADULT PERSONA ENGINE
+from young_adult.heal_ai.persona import analyze_sentiment_and_build_prompt
+
+# Professional Logger
+logger = logging.getLogger("HEAL_YOUNG_ADULT_SERVICE")
 
 # ---------------------------------------------------------
 # 1. APPLICATION-LEVEL ENCRYPTION ENGINE
@@ -46,7 +50,7 @@ def decrypt_message(encrypted_text: str) -> str:
 class APIKeyManager:
     """
     Dynamically scans the environment for any API keys matching the pattern:
-    PROVIDER_API_KEY_X (e.g., COHERE_API_KEY_1, GEMINI_API_KEY_99).
+    PROVIDER_API_KEY_X (e.g., MISTRAL_API_KEY_1, GEMINI_API_KEY_2).
     """
     def __init__(self):
         self.pools = defaultdict(list)
@@ -84,12 +88,10 @@ key_manager = APIKeyManager()
 # ---------------------------------------------------------
 async def generate_sidebar_title(session_id: str, first_message: str):
     """
-    Runs in the background. Uses a cheap model to generate a 3-word title.
+    Runs in the background to generate a professional session title.
     Includes hard truncation to prevent database schema violations.
     """
     try:
-        # CRITICAL: Import your database session maker here to get a fresh session.
-        # Passing the main request 'db' into a background task causes crashes.
         from db import async_session_maker 
         
         key = key_manager.get_key("mistral")
@@ -100,8 +102,8 @@ async def generate_sidebar_title(session_id: str, first_message: str):
                     # [FIXED]: Prompt Hardening. Explicitly forbidding newlines and long strings.
                     "role": "system", 
                     "content": (
-                        "Summarize this message into a highly concise title. "
-                        "MAXIMUM 4 words. MAXIMUM 50 characters. NO NEWLINES. "
+                        "Summarize this request into a highly concise professional title. "
+                        "MAXIMUM 5 words. MAXIMUM 50 characters. NO NEWLINES. "
                         "Return ONLY the title string, nothing else."
                     )
                 },
@@ -116,21 +118,20 @@ async def generate_sidebar_title(session_id: str, first_message: str):
         # 2. Hard slice at 100 characters to absolutely guarantee it never breaches the VARCHAR(100) DB limit.
         safe_title = raw_title.replace("\n", " ").strip()[:100]
 
-        # Use a fresh connection to avoid "Session already closed" errors
         async with async_session_maker() as db:
-            session_record = await db.get(ChatSession, session_id)
+            session_record = await db.get(YoungAdultChatSession, session_id)
             if session_record:
                 session_record.title = safe_title
                 await db.commit()
             
     except Exception as e:
-        print(f"[BACKGROUND WORKER ERROR] Failed to summarize title: {e}")
+        logger.error(f"[WORKER ERROR] Failed to summarize young adult session title: {e}")
 
 
 # ---------------------------------------------------------
 # 4. THE MAIN SERVICE ORCHESTRATOR
 # ---------------------------------------------------------
-class AIBuddyService:
+class HealAIService:
     @staticmethod
     async def process_chat_stream(
         user_id: str,
@@ -141,30 +142,29 @@ class AIBuddyService:
         background_tasks: BackgroundTasks
     ) -> AsyncGenerator[str, None]:
         """
-        The master pipeline. Handles context retrieval, dynamic persona injection, 
-        load balancing, SSE streaming, and encrypted storage.
+        The Master Pipeline for Young Adult Heal AI.
         """
         
-        # --- FIX 1: PREVENT THE NEW CHAT 500 CRASH WITH DEFENSIVE COMMIT ---
+        # --- SESSION INITIALIZATION ---
         is_new_session = False
         if not session_id:
             session_id = str(uuid.uuid4())
             is_new_session = True
-            new_session = ChatSession(
+            new_session = YoungAdultChatSession(
                 id=session_id,
                 user_id=user_id,
-                title="New Buddy Talk ✨"
+                title="Heal AI Session"
             )
             try:
                 if db is not None:
                     db.add(new_session)
                     await db.commit()
             except Exception as e:
-                print(f"[DB WARNING] Session created but DB commit delayed: {e}")
+                logger.warning(f"[DB] Young Adult session initialization delayed: {e}")
             
-        # Step 1: Encrypt and safely save user message
+        # 1. Encrypt and store user input
         encrypted_user_msg = encrypt_message(raw_message)
-        new_msg = ChatMessage(
+        new_msg = YoungAdultChatMessage(
             id=os.urandom(16).hex(),
             session_id=session_id,
             role=MessageRole.USER.value,
@@ -175,21 +175,21 @@ class AIBuddyService:
                 db.add(new_msg)
                 await db.commit()
         except Exception as e:
-            print(f"[DB WARNING] User message received but DB commit delayed: {e}")
+            logger.warning(f"[DB] Young Adult user message storage delayed: {e}")
 
-        # Step 2: Context Retrieval
+        # 2. Context Retrieval (Last 15 messages for deeper conversation)
         try:
             result = await db.execute(
-                select(ChatMessage)
-                .where(ChatMessage.session_id == session_id)
-                .order_by(ChatMessage.created_at.desc())
-                .limit(10)
+                select(YoungAdultChatMessage)
+                .where(YoungAdultChatMessage.session_id == session_id)
+                .order_by(YoungAdultChatMessage.created_at.desc())
+                .limit(15)
             )
             history_records = result.scalars().all()[::-1]
         except Exception:
-            history_records = [] # Fallback to empty history if DB is inaccessible
+            history_records = []
 
-        # Step 3: Build Payload via Imported Persona Logic
+        # 3. Build Payload via Young Adult Persona
         messages_payload = []
         system_prompt = analyze_sentiment_and_build_prompt(raw_message)
         messages_payload.append({"role": "system", "content": system_prompt})
@@ -198,14 +198,14 @@ class AIBuddyService:
             decrypted_text = decrypt_message(record.encrypted_content)
             messages_payload.append({"role": record.role, "content": decrypted_text})
 
-        # Step 4: Background Summarization
+        # 4. Background Summarization
         if is_new_session:
             background_tasks.add_task(generate_sidebar_title, session_id, raw_message)
 
-        # Step 5: Route to LLM
+        # 5. Route to LLM
         active_key = key_manager.get_key(provider.value)
         model_map = {
-            "cohere": "command-r",
+            "cohere": "command-r-plus",
             "mistral": "mistral/mistral-large-latest",
             "gemini": "gemini/gemini-1.5-pro",
             "deepseek": "deepseek/deepseek-chat"
@@ -215,7 +215,7 @@ class AIBuddyService:
         if is_new_session:
             yield f"data: {json.dumps({'session_id': session_id})}\n\n"
 
-        # Step 6: SSE Stream
+        # 6. Real-Time Streaming
         full_ai_response = ""
         try:
             response_stream = await acompletion(
@@ -232,17 +232,17 @@ class AIBuddyService:
                     yield f"data: {json.dumps({'content': text_chunk})}\n\n"
                     
         except Exception as e:
-            print(f"[LLM STREAMING ERROR]: {e}")
-            yield f"data: {json.dumps({'error': 'Buddy is taking a quick nap. Try again!'})}\n\n"
+            logger.error(f"[LLM ERROR] Streaming failed for Young Adult Heal AI: {e}")
+            yield f"data: {json.dumps({'error': 'Heal AI encountered an issue. Please retry.'})}\n\n"
             return
 
         yield "data: [DONE]\n\n"
 
-        # Step 7: The Bulletproof Database Save
+        # 7. Persistent Storage for AI Response
         if full_ai_response:
             try:
                 encrypted_ai_msg = encrypt_message(full_ai_response)
-                ai_db_msg = ChatMessage(
+                ai_db_msg = YoungAdultChatMessage(
                     id=os.urandom(16).hex(),
                     session_id=session_id,
                     role=MessageRole.ASSISTANT.value,
@@ -250,16 +250,10 @@ class AIBuddyService:
                     provider_used=provider.value
                 )
                 
-                # Check that DB connection is still perfectly alive before saving
                 if db is not None:
                     db.add(ai_db_msg)
-                    # Use a safely handled commit to prevent FastAPI lifespan crashes
-                    commit_result = db.commit()
-                    if commit_result is not None:
-                        await commit_result
+                    # Safe commit for async context
+                    await db.commit()
                         
             except Exception as db_err:
-                # We catch the error silently here. The user ALREADY got their 
-                # stream on the frontend, so we don't want to crash the whole server 
-                # just because the database closed a microsecond too early.
-                print(f"[SAFE FALLBACK] Stream finished successfully, but history save was interrupted: {db_err}")
+                logger.error(f"[DB] Final history save failed: {db_err}")

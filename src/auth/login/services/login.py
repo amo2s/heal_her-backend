@@ -30,7 +30,11 @@ class SecurityRole(str, Enum):
     """
     KID = "kid"
     TEEN = "teen"
-    YOUNG_ADULT = "young-adult"
+    
+    # [BUGFIX 1]: Changed "young-adult" to "young_adult".
+    # Why: The database and security guards (JWT audience) expect snake_case. 
+    # This acts as the secure identifier, independent of the frontend URL.
+    YOUNG_ADULT = "young_adult"
 
     @property
     def dashboard_route(self) -> str:
@@ -51,7 +55,7 @@ class SecurityRole(str, Enum):
         try:
             return cls(raw_role)
         except ValueError:
-            logger.error(f"DATA INTEGRITY WARNING: Invalid role '{raw_role}' found. Defaulting to safe young-adult path.")
+            logger.error(f"DATA INTEGRITY WARNING: Invalid role '{raw_role}' found. Defaulting to safe young_adult path.")
             return cls.YOUNG_ADULT
 
 
@@ -124,7 +128,8 @@ async def execute_login(
     await valkey_client.delete(f"login_fails_email:{credentials.email}")
 
     # 5.5 ADVANCED ROLE RESOLUTION
-    raw_user_role = getattr(user, 'role', 'young-adult') 
+    # [BUGFIX 2]: Changed default fallback from "young-adult" to "young_adult" to match the Enum update.
+    raw_user_role = getattr(user, 'role', 'young_adult') 
     security_role = SecurityRole.safe_resolve(raw_user_role)
 
     secure_role_string = security_role.value          
@@ -140,9 +145,11 @@ async def execute_login(
         "dashboard": frontend_dashboard_path
     }
 
-    # THE FIX: Inject the resolved domain to sync with the new security.py requirements
-    access_token = create_access_token(data=token_payload, domain=frontend_dashboard_path)
-    refresh_token = create_refresh_token(data=token_payload, domain=frontend_dashboard_path)
+    # [BUGFIX 3]: Passed `secure_role_string` (e.g., 'young_adult') to the domain parameter.
+    # Why: The domain sets the JWT 'aud' claim. It must match the exact string the guards look for, 
+    # not the frontend URL (which is 'young-adults').
+    access_token = create_access_token(data=token_payload, domain=secure_role_string)
+    refresh_token = create_refresh_token(data=token_payload, domain=secure_role_string)
 
     # ---------------------------------------------------------
     # 7. PACKAGE THE SAFE RESPONSE
