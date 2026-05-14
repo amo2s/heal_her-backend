@@ -1,9 +1,9 @@
 """
 kids/ai_buddy/services/ai_buddy.py
 
-The Elite Core Service for the Kids AI Buddy.
-Features: Dynamic Key Load Balancing, Application-Level Encryption, 
-Async SSE Streaming, and External Persona Injection.
+The Fortified Core Service for the Kids AI Buddy.
+Features: Security Shield Integration, Application-Level Encryption, 
+and Fail-Safe Background Summarization.
 """
 
 import os
@@ -11,6 +11,7 @@ import re
 import json
 import itertools
 import uuid
+import logging
 from collections import defaultdict
 from typing import AsyncGenerator
 
@@ -20,18 +21,27 @@ from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-# Import configurations, models, and schemas
+# [UPDATE]: Security Shield Integration
+from core.exceptions import InfrastructureError, ValidationError
 from core.config import settings
+
+# Import models, schemas, and persona logic
 from kids.ai_buddy.models import ChatSession, ChatMessage
 from kids.ai_buddy.schemas.ai_buddy import AIProvider, MessageRole
-
-# IMPORT THE PERSONA ENGINE
 from kids.ai_buddy.persona import analyze_sentiment_and_build_prompt
+
+# Professional security logging
+logger = logging.getLogger("HEAL_AI_SERVICE")
 
 # ---------------------------------------------------------
 # 1. APPLICATION-LEVEL ENCRYPTION ENGINE
 # ---------------------------------------------------------
-fernet_cipher = Fernet(settings.MESSAGE_ENCRYPTION_KEY.encode())
+# [UPDATE]: Logic remains, but we now fail loudly in the logs if keys are missing
+try:
+    fernet_cipher = Fernet(settings.MESSAGE_ENCRYPTION_KEY.encode())
+except Exception as e:
+    logger.critical(f"ENCRYPTION KEY FAILURE: {str(e)}")
+    # We don't raise here yet to allow the app to boot, but calls to encrypt will fail safely.
 
 def encrypt_message(text: str) -> str:
     return fernet_cipher.encrypt(text.encode()).decode()
@@ -55,7 +65,6 @@ class APIKeyManager:
 
     def _initialize_pools(self):
         pattern = re.compile(r"^([A-Z]+)_API_KEY_(\d+)$")
-        
         for env_key, env_val in os.environ.items():
             match = pattern.match(env_key)
             if match:
@@ -73,50 +82,38 @@ class APIKeyManager:
         
         fallback = os.getenv(f"{provider_key.upper()}_API_KEY")
         if not fallback:
-            raise ValueError(f"CRITICAL: No API keys found for provider {provider}")
+            # [UPDATE]: Replaced ValueError with InfrastructureError to mask env config from user
+            raise InfrastructureError(
+                internal_message=f"CRITICAL: No API keys found for provider {provider}"
+            )
         return fallback
 
 key_manager = APIKeyManager()
 
 
 # ---------------------------------------------------------
-# 3. BACKGROUND SUMMARIZATION WORKER
+# 3. BACKGROUND SUMMARIZATION WORKER (Fortified)
 # ---------------------------------------------------------
 async def generate_sidebar_title(session_id: str, first_message: str):
     """
-    Runs in the background. Uses a cheap model to generate a 3-word title.
-    Includes hard truncation to prevent database schema violations.
+    Runs in the background. Uses a cheap model to generate a title.
+    [UPDATE]: Error masking added to prevent worker crashes from affecting the main thread.
     """
     try:
-        # CRITICAL: Import your database session maker here to get a fresh session.
-        # Passing the main request 'db' into a background task causes crashes.
         from db import async_session_maker 
         
         key = key_manager.get_key("mistral")
         response = await acompletion(
             model="mistral/mistral-tiny",
             messages=[
-                {
-                    # [FIXED]: Prompt Hardening. Explicitly forbidding newlines and long strings.
-                    "role": "system", 
-                    "content": (
-                        "Summarize this message into a highly concise title. "
-                        "MAXIMUM 4 words. MAXIMUM 50 characters. NO NEWLINES. "
-                        "Return ONLY the title string, nothing else."
-                    )
-                },
+                {"role": "system", "content": "Summarize into a concise 3-word title. No newlines. Return only string."},
                 {"role": "user", "content": first_message}
             ],
             api_key=key
         )
         raw_title = response.choices[0].message.content.strip()
-
-        # [FIXED]: Sanitization & Hard Truncation (The Fail-Safe)
-        # 1. Replace newlines with spaces to prevent UI rendering bugs.
-        # 2. Hard slice at 100 characters to absolutely guarantee it never breaches the VARCHAR(100) DB limit.
         safe_title = raw_title.replace("\n", " ").strip()[:100]
 
-        # Use a fresh connection to avoid "Session already closed" errors
         async with async_session_maker() as db:
             session_record = await db.get(ChatSession, session_id)
             if session_record:
@@ -124,7 +121,8 @@ async def generate_sidebar_title(session_id: str, first_message: str):
                 await db.commit()
             
     except Exception as e:
-        print(f"[BACKGROUND WORKER ERROR] Failed to summarize title: {e}")
+        # [UPDATE]: Silent internal logging. User never sees this failure.
+        logger.error(f"[BACKGROUND WORKER] Title Generation Failed: {str(e)}")
 
 
 # ---------------------------------------------------------
@@ -140,29 +138,20 @@ class AIBuddyService:
         db: AsyncSession,
         background_tasks: BackgroundTasks
     ) -> AsyncGenerator[str, None]:
-        """
-        The master pipeline. Handles context retrieval, dynamic persona injection, 
-        load balancing, SSE streaming, and encrypted storage.
-        """
         
-        # --- FIX 1: PREVENT THE NEW CHAT 500 CRASH WITH DEFENSIVE COMMIT ---
+        # [UPDATE]: Guard against malformed messages before hitting LLM
+        if not raw_message.strip():
+            raise ValidationError(public_message="I can't hear you! What's on your mind?")
+
+        # Step 1: Session & Message Initialization
         is_new_session = False
         if not session_id:
             session_id = str(uuid.uuid4())
             is_new_session = True
-            new_session = ChatSession(
-                id=session_id,
-                user_id=user_id,
-                title="New Buddy Talk ✨"
-            )
-            try:
-                if db is not None:
-                    db.add(new_session)
-                    await db.commit()
-            except Exception as e:
-                print(f"[DB WARNING] Session created but DB commit delayed: {e}")
-            
-        # Step 1: Encrypt and safely save user message
+            new_session = ChatSession(id=session_id, user_id=user_id, title="New Buddy Talk ✨")
+            db.add(new_session)
+
+        # Encrypt and save user message
         encrypted_user_msg = encrypt_message(raw_message)
         new_msg = ChatMessage(
             id=os.urandom(16).hex(),
@@ -170,26 +159,22 @@ class AIBuddyService:
             role=MessageRole.USER.value,
             encrypted_content=encrypted_user_msg
         )
+        db.add(new_msg)
+
         try:
-            if db is not None:
-                db.add(new_msg)
-                await db.commit()
+            await db.commit()
         except Exception as e:
-            print(f"[DB WARNING] User message received but DB commit delayed: {e}")
+            # [UPDATE]: Masked DB failures during initialization
+            raise InfrastructureError(internal_message=f"DB Session Init Failure: {str(e)}")
 
-        # Step 2: Context Retrieval
-        try:
-            result = await db.execute(
-                select(ChatMessage)
-                .where(ChatMessage.session_id == session_id)
-                .order_by(ChatMessage.created_at.desc())
-                .limit(10)
-            )
-            history_records = result.scalars().all()[::-1]
-        except Exception:
-            history_records = [] # Fallback to empty history if DB is inaccessible
+        # Step 2: Retrieve History (Context Retrieval)
+        result = await db.execute(
+            select(ChatMessage).where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.desc()).limit(10)
+        )
+        history_records = result.scalars().all()[::-1]
 
-        # Step 3: Build Payload via Imported Persona Logic
+        # Step 3: Build Persona Payload
         messages_payload = []
         system_prompt = analyze_sentiment_and_build_prompt(raw_message)
         messages_payload.append({"role": "system", "content": system_prompt})
@@ -198,11 +183,7 @@ class AIBuddyService:
             decrypted_text = decrypt_message(record.encrypted_content)
             messages_payload.append({"role": record.role, "content": decrypted_text})
 
-        # Step 4: Background Summarization
-        if is_new_session:
-            background_tasks.add_task(generate_sidebar_title, session_id, raw_message)
-
-        # Step 5: Route to LLM
+        # Step 4: LLM Routing & Key Management
         active_key = key_manager.get_key(provider.value)
         model_map = {
             "cohere": "command-r",
@@ -214,8 +195,9 @@ class AIBuddyService:
 
         if is_new_session:
             yield f"data: {json.dumps({'session_id': session_id})}\n\n"
+            background_tasks.add_task(generate_sidebar_title, session_id, raw_message)
 
-        # Step 6: SSE Stream
+        # Step 5: SSE Stream
         full_ai_response = ""
         try:
             response_stream = await acompletion(
@@ -232,13 +214,14 @@ class AIBuddyService:
                     yield f"data: {json.dumps({'content': text_chunk})}\n\n"
                     
         except Exception as e:
-            print(f"[LLM STREAMING ERROR]: {e}")
+            # [UPDATE]: Integrated Security Shield message for LLM outages
+            logger.error(f"[LLM ERROR] Streaming failure for {provider.value}: {str(e)}")
             yield f"data: {json.dumps({'error': 'Buddy is taking a quick nap. Try again!'})}\n\n"
             return
 
         yield "data: [DONE]\n\n"
 
-        # Step 7: The Bulletproof Database Save
+        # Step 6: Atomic Database Save (Persistent History)
         if full_ai_response:
             try:
                 encrypted_ai_msg = encrypt_message(full_ai_response)
@@ -249,17 +232,9 @@ class AIBuddyService:
                     encrypted_content=encrypted_ai_msg,
                     provider_used=provider.value
                 )
-                
-                # Check that DB connection is still perfectly alive before saving
-                if db is not None:
-                    db.add(ai_db_msg)
-                    # Use a safely handled commit to prevent FastAPI lifespan crashes
-                    commit_result = db.commit()
-                    if commit_result is not None:
-                        await commit_result
-                        
+                db.add(ai_db_msg)
+                await db.commit()
             except Exception as db_err:
-                # We catch the error silently here. The user ALREADY got their 
-                # stream on the frontend, so we don't want to crash the whole server 
-                # just because the database closed a microsecond too early.
-                print(f"[SAFE FALLBACK] Stream finished successfully, but history save was interrupted: {db_err}")
+                # [UPDATE]: Final safeguard. If the stream succeeded but save failed, 
+                # we don't crash the user, we just log the data loss internally.
+                logger.error(f"[SAVE DELAY] Stream finished but history save interrupted: {str(db_err)}")

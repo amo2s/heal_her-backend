@@ -1,6 +1,6 @@
 import strawberry
 from fastapi import HTTPException
-from jose import jwt  # Added to securely peek at the token payload
+from jose import jwt  # Using python-jose for JWT operations
 from core.security import verify_refresh_token, create_access_token, create_refresh_token
 
 @strawberry.type
@@ -18,13 +18,13 @@ async def handle_refresh(token: str) -> RefreshResponse:
     """
     try:
         # ---------------------------------------------------------
-        # 1. PEEK AT THE DOMAIN (The Missing Argument Fix)
+        # 1. PEEK AT THE DOMAIN (The Positional Argument Fix)
         # ---------------------------------------------------------
         # We must know the expected domain to satisfy the strict verifier.
-        # We decode without verification just to read the claim, then verify strictly below.
         try:
-            # Note: If you use PyJWT instead of python-jose, this syntax is exactly the same.
-            unverified_payload = jwt.decode(token, options={"verify_signature": False})
+            # [FIXED]: We use get_unverified_claims instead of decode. 
+            # This completely bypasses the need for a 'key' argument while safely reading the payload.
+            unverified_payload = jwt.get_unverified_claims(token)
             
             # Your system uses the 'role' (e.g., 'young_adult') as the security domain barrier
             security_domain = unverified_payload.get("role") 

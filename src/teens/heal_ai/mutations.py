@@ -3,12 +3,17 @@ src/teens/heal_ai/graphql/mutations.py
 
 Administrative actions for Teens Heal AI.
 Provides renaming, soft-deleting, and bulk purging of session history.
+Now fully integrated with the Security Shield and XSS sanitization to guarantee Zero-Leak operations.
 """
 
 import strawberry
+import nh3
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+
+# [UPDATE]: Security Shield Integration
+from core.exceptions import AuthenticationError, SecurityViolationError, ValidationError
 
 # Import the teens-specific models
 from teens.heal_ai.models import TeensChatSession
@@ -61,7 +66,16 @@ class HealAIMutations:
         user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
         
         if not user_id:
-            raise Exception("Unauthorized: Identity verification failed.")
+            # [UPDATE]: Replaced raw Exception with standardized AuthenticationError
+            raise AuthenticationError(internal_message="Rename Attempt Failed: Missing user identity in context.")
+
+        # [UPDATE]: XSS Sanitization & Validation for the new title (Prevents GraphQL Injection)
+        clean_title = nh3.clean(new_title, tags=set()).strip()
+        if not clean_title:
+            raise ValidationError(
+                public_message="The session title cannot be empty.",
+                internal_message="Validation Fail: Empty or pure-HTML title provided for Teens session rename."
+            )
 
         # Scoped fetch: Ensure the session belongs to the authenticated teen
         result = await db.execute(
@@ -71,10 +85,13 @@ class HealAIMutations:
         session_record = result.scalars().first()
 
         if not session_record:
-            raise Exception("Session not found or permission denied.")
+            # [UPDATE]: Replaced raw Exception with SecurityViolationError to track potential IDOR attempts
+            raise SecurityViolationError(
+                internal_message=f"IDOR Prevented: User {user_id} attempted to rename unowned/nonexistent Teens session {session_id}."
+            )
 
         # Update and Commit
-        session_record.title = new_title[:100]  # Respect database constraints
+        session_record.title = clean_title[:100]  # Respect database constraints
         await db.commit()
         await db.refresh(session_record)
 
@@ -101,7 +118,8 @@ class HealAIMutations:
         user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
         
         if not user_id:
-            return TeensDeleteSessionPayload(success=False, message="Unauthorized.", deleted_session_id=None)
+            # [UPDATE]: Replaced silent failure payload with loud internal AuthenticationError
+            raise AuthenticationError(internal_message="Delete Attempt Failed: Missing user identity in context.")
 
         # Atomic Soft Delete
         query = (
@@ -137,7 +155,8 @@ class HealAIMutations:
         user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
         
         if not user_id:
-            return TeensClearHistoryPayload(success=False, message="Unauthorized.", sessions_cleared_count=0)
+            # [UPDATE]: Replaced silent failure payload with loud internal AuthenticationError
+            raise AuthenticationError(internal_message="Clear History Attempt Failed: Missing user identity in context.")
 
         # Bulk Atomic Soft Delete
         query = (

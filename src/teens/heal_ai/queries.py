@@ -2,7 +2,8 @@
 src/teens/heal_ai/graphql/queries.py
 
 Handles all data retrieval (Reads) for the Teens Heal AI.
-Features: Paginated Sidebar fetching, On-the-Fly Memory Decryption, and Ownership Validation.
+Features: Paginated Sidebar fetching, On-the-Fly Memory Decryption, and Adaptive DB Execution.
+Now fully shielded against IDOR (Insecure Direct Object Reference) and data leaks.
 """
 
 import logging
@@ -12,11 +13,14 @@ from strawberry.types import Info
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from graphql import GraphQLError
+
+# [UPDATE]: Security Shield Integration
+# We replace raw GraphQL errors with our sanitized buckets.
+from core.exceptions import AuthenticationError, SecurityViolationError
 
 # Import Teens-specific Models and Services
 from teens.heal_ai.models import TeensChatSession, TeensChatMessage
-from teens.heal_ai.services import decrypt_message
+from teens.heal_ai.services import decrypt_message  # [UPDATE]: Explicit path to the service file
 
 # Import the Teens Return Types for code reuse
 from teens.heal_ai.mutations import TeensChatSessionType
@@ -64,7 +68,10 @@ class HealAIQueries:
         user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
 
         if not user_id:
-            raise GraphQLError("Unauthorized: Identity verification failed.")
+            # [UPDATE]: Replaced leaky GraphQLError with AuthenticationError
+            raise AuthenticationError(
+                internal_message="Query Failed: Identity verification failed in Teens get_active_sessions."
+            )
 
         # Query only active sessions belonging to the authenticated teen
         query = (
@@ -111,7 +118,10 @@ class HealAIQueries:
         user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
 
         if not user_id:
-            raise GraphQLError("Unauthorized: Identity verification failed.")
+            # [UPDATE]: Replaced leaky GraphQLError with AuthenticationError
+            raise AuthenticationError(
+                internal_message="Query Failed: Identity verification failed in Teens get_chat_history."
+            )
 
         # SECURITY GATE: Verify session ownership before fetching messages
         session_query = (
@@ -126,8 +136,11 @@ class HealAIQueries:
             session_check = session_execute_result
 
         if not session_check.scalars().first():
-            logger.warning(f"Access attempt blocked for User: {user_id} on Session: {session_id}")
-            raise GraphQLError("Access Denied: Session not found or restricted.")
+            # [UPDATE]: Replaced manual logger.warning + GraphQLError with a unified SecurityViolationError.
+            # Triggers a silent, safe generic error to the frontend while logging the exact breach internally.
+            raise SecurityViolationError(
+                internal_message=f"IDOR Prevented: User {user_id} attempted to read unowned Teens session {session_id}."
+            )
 
         # Fetch message logs
         msg_query = (
@@ -160,7 +173,8 @@ class HealAIQueries:
                     )
                 )
             except Exception as e:
+                # [EXISTING SAFEGUARD]: Skip corrupted logs to maintain feed continuity,
+                # but ensure the error gets recorded via standard logging.
                 logger.error(f"Decryption failed for Teens message {msg.id}: {str(e)}", exc_info=True)
-                # Skip corrupted logs to maintain feed continuity
 
         return decrypted_history

@@ -25,8 +25,7 @@ from teens.heal_ai.handlers import router as heal_ai_rest_router
 from teens.heal_ai.router import graphql_router as heal_ai_graphql_router
 from teens.dashboard.router import teens_dashboard_router as teens_main_dashboard_router
 
-# --- YOUNG ADULTS ECOSYSTEM (Updated Paths) ---
-# [FIXED]: Updated to 'young_adults' and included the missing GraphQL router
+# --- YOUNG ADULTS ECOSYSTEM ---
 from young_adult.dashboard.router import young_adult_dashboard_router as ya_main_dashboard_router
 from young_adult.heal_ai.handlers import router as ya_heal_ai_rest_router
 from young_adult.heal_ai.router import graphql_router as ya_heal_ai_graphql_router
@@ -98,8 +97,6 @@ app.add_middleware(SecurityHeaderMiddleware)
 # ---------------------------------------------------------
 # 5. ABSOLUTE ROUTE MOUNTING (Option C)
 # ---------------------------------------------------------
-# Under Option C, we remove prefixes here. 
-# Sub-routers MUST define their full paths (e.g., path="/young_adults/...")
 
 # Global Auth/Main
 graphql_app = GraphQLRouter(
@@ -119,8 +116,7 @@ app.include_router(teens_main_dashboard_router)
 app.include_router(heal_ai_rest_router)
 app.include_router(heal_ai_graphql_router)
 
-# Young Adults (Complete mounting)
-# [FIXED]: All prefixes removed. Full paths are handled in the specific router files.
+# Young Adults
 app.include_router(ya_main_dashboard_router)
 app.include_router(ya_heal_ai_rest_router)
 app.include_router(ya_heal_ai_graphql_router)

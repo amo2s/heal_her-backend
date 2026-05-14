@@ -9,6 +9,9 @@ import uuid6
 from core.config import settings
 from db import Base
 
+# [UPDATE]: Import the central Security Shield exceptions
+from core.exceptions import ValidationError, InfrastructureError
+
 # Set up professional security logging
 logger = logging.getLogger("HEAL_SECURITY")
 logger.setLevel(logging.WARNING)
@@ -29,7 +32,11 @@ class AccessControlRouter:
     def resolve(cls, age: int) -> str:
         """Mathematically determines the user's system role based on age."""
         if age < 4 or age > 120:
-            raise ValueError("Age out of supported operational bounds.")
+            # [UPDATE]: Use ValidationError instead of a raw ValueError to prevent unhandled 500 crashes
+            raise ValidationError(
+                public_message="Provided age is out of supported operational bounds.",
+                internal_message=f"Role resolution failed for out-of-bounds age: {age}"
+            )
         
         # bisect_left calculates the exact index without iterating through if/else statements
         index = bisect.bisect_left(cls._breakpoints, age)
@@ -84,7 +91,13 @@ async def create_secure_user(email: str, full_name: str, plain_password: str, ag
             # --- TIMING ATTACK SHIELD ---
             # Bleed time matching a real hash to mask whether the email exists.
             await asyncio.to_thread(pwd_context.hash, DUMMY_PASSWORD)
-            raise ValueError("Email already in use.")
+            
+            # [UPDATE]: Prevent Email Enumeration via Security Shield. 
+            # The frontend gets a generic validation error, the backend logs the exact duplication attempt.
+            raise ValidationError(
+                public_message="Registration failed. Email may be unavailable or already registered.",
+                internal_message=f"Signup identity conflict: Email {email} already in use."
+            )
 
         # Step 3: Hash the actual password
         hashed_password = await asyncio.to_thread(pwd_context.hash, plain_password)
@@ -119,12 +132,14 @@ async def create_secure_user(email: str, full_name: str, plain_password: str, ag
             "message": "Account fortified and created successfully."
         }
 
+    except ValidationError:
+        # [UPDATE]: Let our specifically crafted ValidationErrors bubble up cleanly to the global handler
+        raise
+
     except Exception as e:
-        # Step 8: Information Obfuscation
-        error_msg = str(e)
-        if "Email already in use" in error_msg:
-            raise ValueError(error_msg)
-            
-        # Log real error internally using professional logging, keep the internet blind
-        logger.error(f"DB Insert Failed for {email}: {error_msg}", exc_info=True) 
-        raise ValueError("An internal error occurred while securing the account.")
+        # [UPDATE]: The Ultimate Catch-All Infrastructure Shield.
+        # We completely wipe out any trace of Supabase/PostgREST error messages here.
+        # The exception shield turns this into "System Busy" for the user, while logging the stack trace internally.
+        raise InfrastructureError(
+            internal_message=f"Supabase DB Insert Failed for {email}: {str(e)}"
+        )

@@ -3,12 +3,17 @@ kids/ai_buddy/graphql/mutations.py
 
 Handles the Administrative actions for the Kids AI Buddy (Renaming, Deleting, Purging).
 Implements strict Context-Aware Security to prevent ID Spoofing and atomic soft-deletes.
+Now fully integrated with the Security Shield and XSS sanitization.
 """
 
 import strawberry
+import nh3
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+
+# [UPDATE]: Security Shield Integration
+from core.exceptions import AuthenticationError, SecurityViolationError, ValidationError
 
 # Import your database models
 from kids.ai_buddy.models import ChatSession
@@ -54,12 +59,23 @@ class AIBuddyMutations:
         """
         Allows the child to manually rename a specific chat thread.
         """
-        # Step 1: Extract secure context
         db: AsyncSession = info.context["db"]
-        user_id = info.context["user_context"].get("user_id")
+        user_context = info.context.get("user_context", {})
+        
+        # [UPDATE]: Standardized ID extraction mirroring the handler
+        user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
         
         if not user_id:
-            raise Exception("Unauthorized: Identity verification failed.")
+            # [UPDATE]: Replaced raw Exception with AuthenticationError
+            raise AuthenticationError(internal_message="Rename Attempt Failed: Missing user identity in context.")
+
+        # [UPDATE]: XSS Sanitization & Validation for the new title
+        clean_title = nh3.clean(new_title, tags=set()).strip()
+        if not clean_title:
+            raise ValidationError(
+                public_message="The new title can't be empty!",
+                internal_message="Validation Fail: Empty or pure-HTML title provided for rename."
+            )
 
         # Step 2: Fetch the session strictly scoped to the authenticated user
         result = await db.execute(
@@ -69,10 +85,13 @@ class AIBuddyMutations:
         session_record = result.scalars().first()
 
         if not session_record:
-            raise Exception("Session not found or you do not have permission to edit it.")
+            # [UPDATE]: Replaced raw Exception with SecurityViolationError to track potential IDOR attempts
+            raise SecurityViolationError(
+                internal_message=f"IDOR Prevented: User {user_id} attempted to rename unowned/nonexistent session {session_id}."
+            )
 
         # Step 3: Update and Commit
-        session_record.title = new_title[:100]  # Cap length for safety
+        session_record.title = clean_title[:100]  # Cap length for safety
         await db.commit()
         await db.refresh(session_record)
 
@@ -96,10 +115,13 @@ class AIBuddyMutations:
         but remains in the database for safety audits.
         """
         db: AsyncSession = info.context["db"]
-        user_id = info.context["user_context"].get("user_id")
+        user_context = info.context.get("user_context", {})
+        
+        user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
         
         if not user_id:
-            return DeleteSessionPayload(success=False, message="Unauthorized.", deleted_session_id=None)
+            # [UPDATE]: Replaced silent failure payload with loud internal AuthenticationError
+            raise AuthenticationError(internal_message="Delete Attempt Failed: Missing user identity in context.")
 
         # Atomic Soft Delete: More efficient than selecting then updating
         query = (
@@ -131,10 +153,13 @@ class AIBuddyMutations:
         Purges the entire sidebar history for the child in one lightning-fast bulk operation.
         """
         db: AsyncSession = info.context["db"]
-        user_id = info.context["user_context"].get("user_id")
+        user_context = info.context.get("user_context", {})
+        
+        user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
         
         if not user_id:
-            return ClearHistoryPayload(success=False, message="Unauthorized.", sessions_cleared_count=0)
+            # [UPDATE]: Replaced silent failure payload with loud internal AuthenticationError
+            raise AuthenticationError(internal_message="Clear History Attempt Failed: Missing user identity in context.")
 
         # Bulk Soft Delete
         query = (

@@ -1,22 +1,23 @@
 """
 src/teens/heal_ai/handlers/heal_ai.py
 
-The Entry Point for the Teens Heal AI.
+The Fortified Entry Point for the Teens Heal AI.
 Optimized for Hybrid GraphQL/REST Architecture and Real-Time SSE Streaming.
+Integrated with the HEAL Security Shield for Zero-Leak operation.
 """
 
 import json
 import logging
-from fastapi import APIRouter, Depends, Request, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, Depends, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Import architectural layers
+# [UPDATE]: Architectural Layer Imports aligned with Security Shield
 from db import get_db
-# Updated import to use the singular function name while keeping the 'teens' directory path
+from core.exceptions import AuthenticationError
 from teens.heal_ai.guards import require_safe_teen_context, analyze_payload_safety
 from teens.heal_ai.schemas import ChatRequest
-from teens.heal_ai.services import HealAIService
+from teens.heal_ai.services import HealAIService # [UPDATE]: Explicit service path
 
 # Professional Logger for the Teens AI
 logger = logging.getLogger("HEAL_TEENS_AI_HANDLER")
@@ -29,38 +30,37 @@ async def handle_heal_chat_stream(
     request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    # Updated dependency to match the singular function name
+    # [UPDATE]: Guard strictly enforces the 'teen' role and JWT validity.
+    # If the guard fails, it raises a Shielded AuthenticationError automatically.
     user_context: dict = Depends(require_safe_teen_context()) 
 ):
     """
     The High-Performance Streaming Handler for Heal AI.
-    Standardized to handle JSON payloads for SSE compatibility with mature safety checks.
+    Standardized for Zero-Leak error handling and SSE compatibility with mature safety checks.
     """
     
-    try:
-        # 1. Extract the verified user ID from the Guard
-        user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
-        
-        if not user_id:
-            logger.error(f"Identity Verification Failed. Context received: {user_context}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, 
-                detail="User identity could not be verified."
-            )
-            
-        # 2. Heuristic Safety Check
-        # Analyzes the teen's input for severe prohibited patterns before processing.
-        analyze_payload_safety(payload.current_message.content)
-        
-        # 3. Session Context
-        session_id = payload.session_id
+    # 1. Identity Verification
+    # [UPDATE]: Standardized ID extraction mirroring the Kids sector and Auth architecture.
+    user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
+    
+    if not user_id:
+        # If identity is missing from a verified token, we log a high-priority security anomaly.
+        raise AuthenticationError(
+            internal_message=f"Identity Failure: Guard passed empty context for teen. Payload: {user_context}"
+        )
 
-        # 4. Hand over to the Service Layer
+    # 2. Heuristic Safety Check
+    # [UPDATE]: Now raises a ValidationError internally if prohibited patterns are found.
+    # This prevents the request from hitting the service layer if unsafe content is detected.
+    analyze_payload_safety(payload.current_message.content)
+    
+    try:
+        # 3. Hand over to the Service Layer
         # The service returns an AsyncGenerator which StreamingResponse pipes to the client.
         return StreamingResponse(
             HealAIService.process_chat_stream(
                 user_id=str(user_id),
-                session_id=session_id,
+                session_id=payload.session_id,
                 raw_message=payload.current_message.content,
                 provider=payload.provider,
                 db=db,
@@ -70,20 +70,18 @@ async def handle_heal_chat_stream(
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no" # Essential for real-time delivery through Nginx
+                "X-Accel-Buffering": "no" # Essential for real-time delivery through Nginx/Next.js
             }
         )
         
-    except HTTPException:
-        # Pass through standard HTTP exceptions (like 400 safety blocks or 401/403 auth errors)
-        raise
-        
     except Exception as e:
-        uid = user_context.get('sub') or user_context.get('user_id') or "Unknown"
-        logger.error(f"Stream initiation failed for User {uid}: {str(e)}", exc_info=True)
+        # [UPDATE]: Fail-Safe SSE Error Generator
+        # Ensures that if the stream initiation crashes (e.g. LLM provider down), 
+        # the frontend receives a structured [DONE] signal instead of a pending hang.
+        logger.error(f"[STREAM START FAIL] Teen User {user_id}: {str(e)}", exc_info=True)
         
-        # Secure Fallback: Return a professional SSE-formatted error to prevent frontend hang
         async def error_generator():
+            # Standardized supportive message for the teen demographic
             error_data = json.dumps({
                 "error": "Heal AI is temporarily unavailable. Please try again in a few moments."
             })

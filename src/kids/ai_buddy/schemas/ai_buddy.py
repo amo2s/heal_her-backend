@@ -1,15 +1,19 @@
 """
-schemas/ai_buddy.py
+kids/ai_buddy/schemas/ai_buddy.py
 
-This module defines the strict data contracts and validation layers for the Kids AI Buddy.
-It utilizes Pydantic v2 for data validation and nh3 for high-performance XSS sanitization.
+The Fortified Data Contract Layer for the Kids AI Buddy.
+Features: Security Shield Integration, XSS Sanitization, and Entropy Enforcement.
 """
 
 import re
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator, model_validator
-import nh3  # Must be installed: pip install nh3
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+import nh3
+
+# [UPDATE]: Security Shield Integration
+# We alias our custom ValidationError to prevent collisions with Pydantic's internal core.
+from core.exceptions import ValidationError as ShieldValidationError
 
 # ---------------------------------------------------------
 # Enums for Strict Type Enforcement
@@ -18,7 +22,6 @@ import nh3  # Must be installed: pip install nh3
 class AIProvider(str, Enum):
     """
     Restricts the AI models strictly to the approved stack.
-    Prevents injection of unauthorized or unauthenticated provider endpoints.
     """
     COHERE = "cohere"
     MISTRAL = "mistral"
@@ -40,30 +43,40 @@ class MessageRole(str, Enum):
 class Message(BaseModel):
     """
     Represents a single conversational turn.
-    Applies strict sanitization and validation to the content.
+    [UPDATE]: Added model_config to forbid extra fields and auto-strip whitespace.
     """
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True
+    )
+
     role: MessageRole
-    # 5000 characters allows for extensive "safe space" expression (~1000 words)
-    # while still preventing massive payload DOS attacks.
     content: str = Field(..., min_length=1, max_length=5000)
 
     @field_validator("content")
     @classmethod
     def sanitize_and_check_entropy(cls, v: str) -> str:
         """
-        First line of defense. Strips all HTML/scripts and prevents buffer attacks.
+        First line of defense. Strips HTML/scripts and prevents entropy attacks.
+        [UPDATE]: Now uses the Security Shield for masked error reporting.
         """
-        # 1. Strip all HTML tags to prevent Cross-Site Scripting (XSS)
+        # 1. Strip all HTML tags to prevent XSS
         clean_text = nh3.clean(v, tags=set()) 
         
         if not clean_text.strip():
-            raise ValueError("Message content cannot be empty or solely HTML tags.")
+            # Internal message tracks the exact cause; Public remains supportive
+            raise ShieldValidationError(
+                public_message="I didn't quite catch that! Could you say it again?",
+                internal_message="Validation Fail: Payload was empty or contained only HTML/JS."
+            )
 
         # 2. Entropy/Repetition Check
-        # Prevents keyboard-mashing DOS attacks (e.g., "A" repeated 100 times)
-        # Allows normal punctuation but blocks massive repetitive strings.
+        # Blocks massive repetitive strings (e.g., "aaaaa...") used in DoS or bypass attempts.
         if re.search(r'(.)\1{100,}', clean_text):
-            raise ValueError("Message contains excessive repetitive characters and was flagged as spam.")
+            raise ShieldValidationError(
+                public_message="Whoops! That looks like a lot of the same letters. Let's try typing something else!",
+                internal_message=f"Entropy Violation: Excessive repetitive characters detected from IP context."
+            )
 
         return clean_text.strip()
 
@@ -71,7 +84,8 @@ class ChatRequest(BaseModel):
     """
     Incoming payload schema from the REST/Frontend layer.
     """
-    # CRITICAL FIX: Added session_id so the handler doesn't crash looking for it.
+    model_config = ConfigDict(extra="forbid")
+
     session_id: Optional[str] = Field(
         default=None,
         description="The ID of the current chat session. None if it's a new conversation."
@@ -80,10 +94,10 @@ class ChatRequest(BaseModel):
         default=AIProvider.MISTRAL, 
         description="The target AI model for semantic routing."
     )
-    # Strictly enforces the "three former chat logs" + current message structure
+    # Strictly enforces context window limits
     history: List[Message] = Field(
         default_factory=list,
-        max_length=10, # Hard cap on history array size to prevent context overflow
+        max_length=10, 
         description="Previous conversation context."
     )
     current_message: Message
@@ -91,12 +105,14 @@ class ChatRequest(BaseModel):
     @model_validator(mode='after')
     def validate_history_roles(self) -> 'ChatRequest':
         """
-        Ensures the history array does not contain malformed or out-of-order roles 
-        that could break the LLM prompt structure.
+        [UPDATE]: Prevents System Prompt Injection attempts.
         """
         for msg in self.history:
             if msg.role == MessageRole.SYSTEM:
-                raise ValueError("System prompts cannot be injected via the client history array.")
+                raise ShieldValidationError(
+                    public_message="Something went wrong with the chat history. Let's start fresh!",
+                    internal_message="Security Violation: Attempted SYSTEM role injection in history array."
+                )
         return self
 
 # ---------------------------------------------------------
@@ -105,7 +121,7 @@ class ChatRequest(BaseModel):
 
 class ModelMetadata(BaseModel):
     """
-    Tracks telemetry and billing metrics for the specific model used.
+    Tracks telemetry and billing metrics.
     """
     provider_used: AIProvider
     tokens_consumed: int = Field(ge=0)
@@ -124,7 +140,6 @@ class ChatResponse(BaseModel):
     @classmethod
     def ensure_safe_output(cls, v: str) -> str:
         """
-        Final pass to ensure the AI's response does not contain accidentally 
-        hallucinated HTML or executable code before reaching the child's browser.
+        Final pass to ensure the AI's response is safe for children's UI.
         """
         return nh3.clean(v, tags=set())

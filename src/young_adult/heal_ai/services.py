@@ -1,9 +1,9 @@
 """
 src/young_adult/heal_ai/services/heal_ai.py
 
-The Elite Core Service for Young Adult Heal AI.
-Features: Dynamic Key Load Balancing, Application-Level Encryption, 
-Async SSE Streaming, and Young Adult-Specific Persona Injection.
+The Fortified Core Service for Young Adult Heal AI.
+Features: Security Shield Integration, Adaptive DB Execution, 
+and Zero-Leak Infrastructure Fail-Safes.
 """
 
 import os
@@ -12,6 +12,7 @@ import json
 import itertools
 import uuid
 import logging
+import inspect
 from collections import defaultdict
 from typing import AsyncGenerator
 
@@ -21,8 +22,9 @@ from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-# Import configurations, models, and schemas
+# [UPDATE]: Security Shield & Architectural Imports
 from core.config import settings
+from core.exceptions import InfrastructureError, ValidationError
 from young_adult.heal_ai.models import YoungAdultChatSession, YoungAdultChatMessage
 from young_adult.heal_ai.schemas import AIProvider, MessageRole
 
@@ -35,7 +37,11 @@ logger = logging.getLogger("HEAL_YOUNG_ADULT_SERVICE")
 # ---------------------------------------------------------
 # 1. APPLICATION-LEVEL ENCRYPTION ENGINE
 # ---------------------------------------------------------
-fernet_cipher = Fernet(settings.MESSAGE_ENCRYPTION_KEY.encode())
+# [UPDATE]: Wrapped in a try/except to prevent application crash on boot if key is missing
+try:
+    fernet_cipher = Fernet(settings.MESSAGE_ENCRYPTION_KEY.encode())
+except Exception as e:
+    logger.critical(f"YOUNG ADULT ENCRYPTION KEY FAILURE: {str(e)}")
 
 def encrypt_message(text: str) -> str:
     return fernet_cipher.encrypt(text.encode()).decode()
@@ -77,14 +83,17 @@ class APIKeyManager:
         
         fallback = os.getenv(f"{provider_key.upper()}_API_KEY")
         if not fallback:
-            raise ValueError(f"CRITICAL: No API keys found for provider {provider}")
+            # [UPDATE]: Replaced ValueError with InfrastructureError to mask environment config from the client
+            raise InfrastructureError(
+                internal_message=f"CRITICAL: No API keys found for provider {provider}"
+            )
         return fallback
 
 key_manager = APIKeyManager()
 
 
 # ---------------------------------------------------------
-# 3. BACKGROUND SUMMARIZATION WORKER
+# 3. BACKGROUND SUMMARIZATION WORKER (Fortified)
 # ---------------------------------------------------------
 async def generate_sidebar_title(session_id: str, first_message: str):
     """
@@ -99,7 +108,6 @@ async def generate_sidebar_title(session_id: str, first_message: str):
             model="mistral/mistral-tiny",
             messages=[
                 {
-                    # [FIXED]: Prompt Hardening. Explicitly forbidding newlines and long strings.
                     "role": "system", 
                     "content": (
                         "Summarize this request into a highly concise professional title. "
@@ -113,9 +121,7 @@ async def generate_sidebar_title(session_id: str, first_message: str):
         )
         raw_title = response.choices[0].message.content.strip()
 
-        # [FIXED]: Sanitization & Hard Truncation (The Fail-Safe)
-        # 1. Replace newlines with spaces to prevent UI rendering bugs.
-        # 2. Hard slice at 100 characters to absolutely guarantee it never breaches the VARCHAR(100) DB limit.
+        # Sanitization & Hard Truncation
         safe_title = raw_title.replace("\n", " ").strip()[:100]
 
         async with async_session_maker() as db:
@@ -125,7 +131,8 @@ async def generate_sidebar_title(session_id: str, first_message: str):
                 await db.commit()
             
     except Exception as e:
-        logger.error(f"[WORKER ERROR] Failed to summarize young adult session title: {e}")
+        # [UPDATE]: Standardized error logging format
+        logger.error(f"[WORKER ERROR] Failed to summarize young adult session title: {str(e)}")
 
 
 # ---------------------------------------------------------
@@ -143,8 +150,13 @@ class HealAIService:
     ) -> AsyncGenerator[str, None]:
         """
         The Master Pipeline for Young Adult Heal AI.
+        [UPDATE]: Now uses the Security Shield and Adaptive DB Execution.
         """
         
+        # [UPDATE]: Guard against malformed/empty messages before allocating resources
+        if not raw_message.strip():
+            raise ValidationError(public_message="I'm here to listen. What's on your mind?")
+
         # --- SESSION INITIALIZATION ---
         is_new_session = False
         if not session_id:
@@ -155,13 +167,8 @@ class HealAIService:
                 user_id=user_id,
                 title="Heal AI Session"
             )
-            try:
-                if db is not None:
-                    db.add(new_session)
-                    await db.commit()
-            except Exception as e:
-                logger.warning(f"[DB] Young Adult session initialization delayed: {e}")
-            
+            db.add(new_session)
+
         # 1. Encrypt and store user input
         encrypted_user_msg = encrypt_message(raw_message)
         new_msg = YoungAdultChatMessage(
@@ -170,24 +177,30 @@ class HealAIService:
             role=MessageRole.USER.value,
             encrypted_content=encrypted_user_msg
         )
-        try:
-            if db is not None:
-                db.add(new_msg)
-                await db.commit()
-        except Exception as e:
-            logger.warning(f"[DB] Young Adult user message storage delayed: {e}")
+        db.add(new_msg)
 
-        # 2. Context Retrieval (Last 15 messages for deeper conversation)
         try:
-            result = await db.execute(
-                select(YoungAdultChatMessage)
-                .where(YoungAdultChatMessage.session_id == session_id)
-                .order_by(YoungAdultChatMessage.created_at.desc())
-                .limit(15)
-            )
-            history_records = result.scalars().all()[::-1]
-        except Exception:
-            history_records = []
+            await db.commit()
+        except Exception as e:
+            # [UPDATE]: Infrastructure error masking for DB initialization failures
+            raise InfrastructureError(internal_message=f"Young Adult DB Session Init Failure: {str(e)}")
+
+        # 2. Context Retrieval (Adaptive Execution)
+        query = (
+            select(YoungAdultChatMessage)
+            .where(YoungAdultChatMessage.session_id == session_id)
+            .order_by(YoungAdultChatMessage.created_at.desc())
+            .limit(15)
+        )
+        
+        # [UPDATE]: Adaptive Execution Engine handles varying SQLAlchemy sync/async results natively
+        execute_result = db.execute(query)
+        if inspect.isawaitable(execute_result):
+            result = await execute_result
+        else:
+            result = execute_result
+            
+        history_records = result.scalars().all()[::-1]
 
         # 3. Build Payload via Young Adult Persona
         messages_payload = []
@@ -232,13 +245,14 @@ class HealAIService:
                     yield f"data: {json.dumps({'content': text_chunk})}\n\n"
                     
         except Exception as e:
-            logger.error(f"[LLM ERROR] Streaming failed for Young Adult Heal AI: {e}")
+            # [UPDATE]: Masked LLM outage response; internal logging of standard exception string
+            logger.error(f"[LLM ERROR] Streaming failed for Young Adult Heal AI: {str(e)}")
             yield f"data: {json.dumps({'error': 'Heal AI encountered an issue. Please retry.'})}\n\n"
             return
 
         yield "data: [DONE]\n\n"
 
-        # 7. Persistent Storage for AI Response
+        # 7. Persistent Storage for AI Response (Adaptive Update)
         if full_ai_response:
             try:
                 encrypted_ai_msg = encrypt_message(full_ai_response)
@@ -252,8 +266,11 @@ class HealAIService:
                 
                 if db is not None:
                     db.add(ai_db_msg)
-                    # Safe commit for async context
-                    await db.commit()
+                    # [UPDATE]: Adaptive Commit handling
+                    commit_result = db.commit()
+                    if commit_result is not None:
+                        await commit_result
                         
             except Exception as db_err:
-                logger.error(f"[DB] Final history save failed: {db_err}")
+                # [UPDATE]: Standardized logging string for interrupted session saves
+                logger.error(f"[DB] Final history save failed: {str(db_err)}")

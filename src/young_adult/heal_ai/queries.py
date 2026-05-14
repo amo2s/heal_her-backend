@@ -2,7 +2,8 @@
 src/young_adult/heal_ai/queries.py
 
 Handles all data retrieval (Reads) for the Young Adult Heal AI.
-Features: Paginated Sidebar fetching, On-the-Fly Memory Decryption, and Ownership Validation.
+Features: Paginated Sidebar fetching, On-the-Fly Memory Decryption, and Adaptive DB Execution.
+Now fully shielded against IDOR (Insecure Direct Object Reference) and data leaks.
 """
 
 import logging
@@ -12,13 +13,15 @@ from strawberry.types import Info
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from graphql import GraphQLError
+
+# [UPDATE]: Security Shield Integration
+from core.exceptions import AuthenticationError, SecurityViolationError
 
 # Import Young Adult-specific Models and Services
 from young_adult.heal_ai.models import YoungAdultChatSession, YoungAdultChatMessage
-from young_adult.heal_ai.services import decrypt_message
+from young_adult.heal_ai.services import decrypt_message  # [UPDATE]: Explicit service path
 
-# [FIXED]: Explicitly importing from the mutations module to resolve the ImportError
+# Explicitly importing from the mutations module
 from young_adult.heal_ai.mutations import YoungAdultChatSessionType
 
 # Professional logger for the Young Adult Dashboard
@@ -64,7 +67,10 @@ class HealAIQueries:
         user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
 
         if not user_id:
-            raise GraphQLError("Unauthorized: Identity verification failed.")
+            # [UPDATE]: Replaced GraphQLError with Security Shield AuthenticationError
+            raise AuthenticationError(
+                internal_message="Query Failed: Identity verification failed in Young Adult get_active_sessions."
+            )
 
         # Query only active sessions belonging to the authenticated young adult
         query = (
@@ -111,7 +117,10 @@ class HealAIQueries:
         user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
 
         if not user_id:
-            raise GraphQLError("Unauthorized: Identity verification failed.")
+            # [UPDATE]: Replaced GraphQLError with Security Shield AuthenticationError
+            raise AuthenticationError(
+                internal_message="Query Failed: Identity verification failed in Young Adult get_chat_history."
+            )
 
         # SECURITY GATE: Verify session ownership before fetching messages
         session_query = (
@@ -126,8 +135,10 @@ class HealAIQueries:
             session_check = session_execute_result
 
         if not session_check.scalars().first():
-            logger.warning(f"Access attempt blocked for User: {user_id} on Session: {session_id}")
-            raise GraphQLError("Access Denied: Session not found or restricted.")
+            # [UPDATE]: Replaced manual logger and GraphQLError with standardized SecurityViolationError for IDOR prevention
+            raise SecurityViolationError(
+                internal_message=f"IDOR Prevented: User {user_id} attempted to read unowned Young Adult session {session_id}."
+            )
 
         # Fetch message logs
         msg_query = (

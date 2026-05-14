@@ -1,15 +1,19 @@
 """
 src/young_adult/heal_ai/schemas.py
 
-This module defines the strict data contracts and validation layers for the Young Adult Heal AI.
-It utilizes Pydantic v2 for data validation and nh3 for high-performance XSS sanitization.
+The Fortified Data Contract Layer for the Young Adult Heal AI.
+Features: Security Shield Integration, XSS Sanitization, and Entropy Enforcement.
 """
 
 import re
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator, model_validator
-import nh3  # Must be installed: pip install nh3
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+import nh3
+
+# [UPDATE]: Security Shield Integration
+# Aliasing core exception to avoid name collisions with Pydantic internal types.
+from core.exceptions import ValidationError as ShieldValidationError
 
 # ---------------------------------------------------------
 # Enums for Strict Type Enforcement
@@ -42,10 +46,14 @@ class Message(BaseModel):
     Represents a single conversational turn.
     Applies strict sanitization and validation to the content.
     """
+    # [UPDATE]: Enforce strict schema boundaries.
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True
+    )
+
     role: MessageRole
-    # 10,000 characters provides ample space for young adults to describe 
-    # complex life situations, career stress, or relational dynamics 
-    # without hitting restrictive walls.
+    # 10,000 characters provides ample space for complex life situations.
     content: str = Field(..., min_length=1, max_length=10000)
 
     @field_validator("content")
@@ -53,18 +61,25 @@ class Message(BaseModel):
     def sanitize_and_check_entropy(cls, v: str) -> str:
         """
         First line of defense. Strips all HTML/scripts and prevents buffer attacks.
+        [UPDATE]: Integrated with Security Shield to mask internal validation logic.
         """
         # 1. Strip all HTML tags to prevent Cross-Site Scripting (XSS)
         clean_text = nh3.clean(v, tags=set()) 
         
         if not clean_text.strip():
-            raise ValueError("Message content cannot be empty or consist solely of formatting tags.")
+            # [UPDATE]: Masked error to prevent revealing internal logic.
+            raise ShieldValidationError(
+                public_message="I'm here to listen. What's on your mind?",
+                internal_message="Validation Fail: Young Adult payload was empty or pure HTML."
+            )
 
         # 2. Entropy/Repetition Check
-        # Prevents keyboard-mashing DOS attacks (e.g., "A" repeated 100 times)
-        # Allows for nuanced language but blocks malicious repetitive strings.
+        # Prevents keyboard-mashing DOS attacks.
         if re.search(r'(.)\1{100,}', clean_text):
-            raise ValueError("Input contains excessive repetitive characters and cannot be processed.")
+            raise ShieldValidationError(
+                public_message="That's a lot of the same character! Could you rephrase that?",
+                internal_message="Entropy Violation: Excessive repetitive characters detected."
+            )
 
         return clean_text.strip()
 
@@ -72,6 +87,9 @@ class ChatRequest(BaseModel):
     """
     Incoming payload schema from the REST/Frontend layer for Young Adults.
     """
+    # [UPDATE]: Forbid extra fields to block payload injection.
+    model_config = ConfigDict(extra="forbid")
+
     session_id: Optional[str] = Field(
         default=None,
         description="The ID of the current chat session. None if it's a new conversation."
@@ -80,8 +98,7 @@ class ChatRequest(BaseModel):
         default=AIProvider.MISTRAL, 
         description="The target AI model for semantic routing."
     )
-    # History cap at 20 ensures deep context for complex adult conversations 
-    # while maintaining performance.
+    # History cap at 20 ensures deep context for adult conversations.
     history: List[Message] = Field(
         default_factory=list,
         max_length=20, 
@@ -92,12 +109,15 @@ class ChatRequest(BaseModel):
     @model_validator(mode='after')
     def validate_history_roles(self) -> 'ChatRequest':
         """
-        Ensures the history array does not contain malformed or out-of-order roles 
-        that could break the LLM prompt structure.
+        Ensures the history array does not contain malformed or out-of-order roles.
         """
         for msg in self.history:
             if msg.role == MessageRole.SYSTEM:
-                raise ValueError("System prompts cannot be injected via the client history array.")
+                # [UPDATE]: Block System Prompt Injection with shielded logging.
+                raise ShieldValidationError(
+                    public_message="Conversation history issue. Let's try starting a new chat.",
+                    internal_message="Security Violation: Attempted SYSTEM role injection in YA history array."
+                )
         return self
 
 # ---------------------------------------------------------
@@ -106,8 +126,7 @@ class ChatRequest(BaseModel):
 
 class ModelMetadata(BaseModel):
     """
-    Tracks telemetry and billing metrics for the specific model used.
-    Maintains consistency across the platform for unified analytics.
+    Tracks telemetry and metrics for the specific model used.
     """
     provider_used: AIProvider
     tokens_consumed: int = Field(ge=0)

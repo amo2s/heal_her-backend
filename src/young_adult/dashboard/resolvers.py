@@ -3,14 +3,19 @@ src/young_adult/dashboard/resolvers.py
 
 The Smart GraphQL Resolvers for the Young Adult Dashboard.
 Calculates temporal context and atomizes user data to provide a personalized, vibe-based experience.
+Now fully integrated with the HEAL Security Shield and Adaptive Execution Engine.
 """
 
 import logging
+import inspect
 from datetime import datetime
 import strawberry
 from strawberry.types import Info
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
+# [UPDATE]: Security Shield Integration
+from core.exceptions import AuthenticationError
 
 # [UPDATED IMPORT]: Fetching the central User model to retrieve full profile data
 from auth.models.signup import User 
@@ -76,28 +81,40 @@ class YoungAdultDashboardQueries:
         user_context = info.context.get("user_context")
         
         # =====================================================================
-        # 2. THE SILENT FAIL PERIMETER
+        # 2. THE SECURITY SHIELD PERIMETER
         # =====================================================================
+        # [UPDATE]: Replaced silent "success=False" returns with loud internal AuthenticationErrors.
         if not db or not user_context:
-            logger.warning("[DASHBOARD ANOMALY] get_me executed without complete context.")
-            return YoungAdultIdentityResponse(
-                success=False,
-                message="Session invalidated or context breached."
+            raise AuthenticationError(
+                internal_message="[DASHBOARD ANOMALY] get_me executed without complete context."
             )
             
+        # [UPDATE]: Standardized ID extraction mirroring the rest of the backend architecture.
+        user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
+        if not user_id:
+            raise AuthenticationError(
+                internal_message="[DASHBOARD ANOMALY] Missing user identity in context."
+            )
+
         # =====================================================================
-        # 3. DATABASE HYDRATION
+        # 3. DATABASE HYDRATION (Adaptive Execution)
         # =====================================================================
         # The JWT only holds the ID. We must query the DB for the full name.
-        user_id = user_context.get("sub")
         query = select(User).where(User.id == user_id)
-        result = await db.execute(query)
+        
+        # [UPDATE]: Implemented the Adaptive Execution Engine to handle sync/async session states gracefully.
+        execute_result = db.execute(query)
+        if inspect.isawaitable(execute_result):
+            result = await execute_result
+        else:
+            result = execute_result
+            
         current_user = result.scalars().first()
 
+        # [UPDATE]: If the user is missing from the DB, revoke access instantly.
         if not current_user:
-            return YoungAdultIdentityResponse(
-                success=False,
-                message="User profile not found in database."
+            raise AuthenticationError(
+                internal_message=f"Orphaned Token: Young Adult profile {user_id} not found in database."
             )
 
         # =====================================================================

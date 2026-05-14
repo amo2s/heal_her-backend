@@ -3,6 +3,7 @@ kids/ai_buddy/graphql/queries.py
 
 Handles all data retrieval (Reads) for the Kids AI Buddy.
 Features: Paginated Sidebar fetching, On-the-Fly Memory Decryption, and Adaptive DB Execution.
+Now fully shielded against IDOR (Insecure Direct Object Reference) and data leaks.
 """
 
 import logging
@@ -12,7 +13,9 @@ from strawberry.types import Info
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from graphql import GraphQLError
+
+# [UPDATE]: Security Shield Integration
+from core.exceptions import AuthenticationError, SecurityViolationError
 
 # Import Models and Services
 from kids.ai_buddy.models import ChatSession, ChatMessage
@@ -60,12 +63,16 @@ class AIBuddyQueries:
         database slowdowns if a child has hundreds of conversations.
         """
         db = info.context["db"]
+        user_context = info.context.get("user_context", {})
         
-        # ELITE FIX: The JWT specification stores the user ID in the "sub" (Subject) claim.
-        user_id = info.context["user_context"].get("sub")
+        # [UPDATE]: Standardized Identity Extraction to match mutations/handlers
+        user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
 
         if not user_id:
-            raise GraphQLError("Unauthorized: Identity verification failed.")
+            # [UPDATE]: Replaced GraphQLError with AuthenticationError
+            raise AuthenticationError(
+                internal_message="Query Failed: Identity verification failed in get_active_sessions."
+            )
 
         # STRICT SCOPING: Only fetch non-deleted sessions belonging to THIS user
         query = (
@@ -107,12 +114,15 @@ class AIBuddyQueries:
         decrypts it in server memory, and sends plain text to the frontend.
         """
         db = info.context["db"]
+        user_context = info.context.get("user_context", {})
         
-        # ELITE FIX: Extract ID using the standard "sub" claim
-        user_id = info.context["user_context"].get("sub")
+        # [UPDATE]: Standardized Identity Extraction
+        user_id = user_context.get("sub") or user_context.get("user_id") or user_context.get("id")
 
         if not user_id:
-            raise GraphQLError("Unauthorized: Identity verification failed.")
+            raise AuthenticationError(
+                internal_message="Query Failed: Identity verification failed in get_chat_history."
+            )
 
         # SECURITY GATE: Verify the user actually owns this session_id.
         session_query = (
@@ -128,8 +138,11 @@ class AIBuddyQueries:
             session_check = session_execute_result
 
         if not session_check.scalars().first():
-            logger.warning(f"Unauthorized session access attempt by User: {user_id} for Session: {session_id}")
-            raise GraphQLError("Access Denied: Session not found or does not belong to you.")
+            # [UPDATE]: Replaced leaky GraphQLError with SecurityViolationError.
+            # Triggers a silent 403 Forbidden to the client while logging the exact breach attempt.
+            raise SecurityViolationError(
+                internal_message=f"IDOR Prevented: User {user_id} attempted to read unowned session {session_id}."
+            )
 
         # Fetch the messages
         msg_query = (
@@ -163,8 +176,8 @@ class AIBuddyQueries:
                     )
                 )
             except Exception as e:
-                # Upgraded to professional logging instead of basic print
+                # [EXISTING LOGIC]: If a single message fails to decrypt, log it and skip. 
+                # This ensures the entire chat doesn't crash just because one row got corrupted.
                 logger.error(f"Decryption failed for message {msg.id}: {str(e)}", exc_info=True)
-                # We skip corrupted messages to prevent the whole query from crashing
 
         return decrypted_history

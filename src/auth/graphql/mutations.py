@@ -3,7 +3,7 @@ from auth.signup.handlers.signup import SignupHandler
 from auth.login.handlers.login import handle_login
 from auth.guards import LoginFortressGuard
 
-# ADDED: Import the new refresh handler
+# [UPDATE]: Import the refined, logic-shielded refresh handler
 from auth.login.handlers.refresh import handle_refresh
 
 @strawberry.type
@@ -11,25 +11,32 @@ class AuthMutation(SignupHandler):
     """
     The main mutation entry point for all Authentication actions.
     This class aggregates our secured handlers into the GraphQL schema.
+    
+    [DOCUMENTATION]: 
+    - No manual error catching (try/except) is allowed here.
+    - All security events bubble up to the Security Shield for sanitization.
     """
     
     # 1. THE SIGNUP GATE
-    # By inheriting from SignupHandler above, Strawberry natively registers the 
-    # `signup` mutation here, fully intact with its `age: int` requirement 
-    # and the SignupFortressGuard. We don't need to manually assign it!
+    # [DOCUMENTATION]: Inherited from SignupHandler. 
+    # This natively registers the `signup` mutation. 
+    # Changes made to the SignupHandler class (Skinny pattern) are automatically reflected here.
 
     # 2. THE LOGIN GATE
     # The impenetrable login endpoint. 
-    # We attach the Dual-Axis Bear Trap (LoginFortressGuard) right at the gate.
-    # If the guard fails, handle_login is never even executed.
+    # [UPDATE]: Permission classes are the first line of defense.
+    # The LoginFortressGuard (Dual-Axis Bear Trap) will drop the connection 
+    # if an IP or Email is currently locked out BEFORE the resolver executes.
     login = strawberry.mutation(
         resolver=handle_login,
         permission_classes=[LoginFortressGuard]
     )
 
-    # 3. THE REFRESH GATE (NEW)
+    # 3. THE REFRESH GATE
     # The silent Negotiator. Takes the 7-day refresh token and issues fresh keys.
-    # We do NOT put the LoginFortressGuard here, because the user is already logged in.
+    # [UPDATE]: Wired to the refined handle_refresh logic.
+    # Logic: Uses unverified claim peeking to route the request to the correct 
+    # security domain (Kid/Teen/Young-Adult) without manual decoding logic in the mutation.
     refresh_token = strawberry.mutation(
         resolver=handle_refresh
     )

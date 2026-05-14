@@ -2,11 +2,19 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
 from typing import Optional
 
+# [UPDATE]: Import the central Security Shield exceptions.
+# We alias ValidationError to ShieldValidationError to prevent catastrophic 
+# namespace collisions with Pydantic's native pydantic_core.ValidationError.
+from core.exceptions import (
+    ValidationError as ShieldValidationError,
+    SecurityViolationError
+)
+
 class SignupInputSchema(BaseModel):
     """
     EXTREMIST SECURITY SCHEMA:
     Validates incoming GraphQL signup requests with ruthless strictness.
-    Now includes age-based routing requirements.
+    Now includes age-based routing requirements and Security Shield integration.
     """
     
     # --- MODEL CONFIGURATION ---
@@ -54,20 +62,34 @@ class SignupInputSchema(BaseModel):
 
     # --- CUSTOM VALIDATORS ---
 
+    @field_validator('full_name')
+    @classmethod
+    def sanitize_full_name(cls, v: str) -> str:
+        """
+        [UPDATE]: Name Firewall Enhancement.
+        Prevents "hidden" duplicates by normalizing internal spacing.
+        (e.g., "Nwaka   Amos" becomes "Nwaka Amos").
+        """
+        return re.sub(r'\s+', ' ', v).strip()
+
     @field_validator('password')
     @classmethod
     def validate_password_strength(cls, v: str) -> str:
         """Strictly checks for uppercase, lowercase, number, and special character."""
+        # [UPDATE]: UX vs. Security Message Splitting. 
+        # The frontend gets a generic, unhelpful message. The terminal gets the exact reason.
+        public_msg = "Password does not meet security requirements."
+        
         if not any(c.islower() for c in v):
-            raise ValueError("Password must contain at least one lowercase letter")
+            raise ShieldValidationError(public_message=public_msg, internal_message="Password failed 'lowercase' check.")
         if not any(c.isupper() for c in v):
-            raise ValueError("Password must contain at least one uppercase letter")
+            raise ShieldValidationError(public_message=public_msg, internal_message="Password failed 'uppercase' check.")
         if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one number")
+            raise ShieldValidationError(public_message=public_msg, internal_message="Password failed 'digit' check.")
         
         special_chars = "@$!%*?&_"
         if not any(c in special_chars for c in v):
-            raise ValueError(f"Password must contain at least one special character from {special_chars}")
+            raise ShieldValidationError(public_message=public_msg, internal_message="Password failed 'special character' check.")
         
         return v
 
@@ -82,5 +104,9 @@ class SignupInputSchema(BaseModel):
     def ensure_honeypot_empty(cls, v: Optional[str]) -> Optional[str]:
         """Secondary check: if the honeypot has ANY value, fail validation."""
         if v:
-            raise ValueError("Invalid request payload.") 
+            # [UPDATE]: Escalated from a standard validation error to a Security Violation.
+            # This triggers the specific 403 bucket in the global exception handler.
+            raise SecurityViolationError(
+                internal_message=f"Honeypot filled during schema validation. Hidden payload: {v}"
+            ) 
         return v

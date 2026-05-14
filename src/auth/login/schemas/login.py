@@ -2,6 +2,13 @@ import strawberry
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 
+# [UPDATE]: Import the central Security Shield exceptions.
+# Aliased ValidationError to ShieldValidationError to prevent namespace crashes with Pydantic.
+from core.exceptions import (
+    ValidationError as ShieldValidationError,
+    SecurityViolationError
+)
+
 # =====================================================================
 # 1. THE PYDANTIC FIREWALL (STRICT VALIDATION)
 # =====================================================================
@@ -26,12 +33,43 @@ class LoginValidationSchema(BaseModel):
     
     bot_trap: Optional[str] = None
 
+    # --- CUSTOM VALIDATORS ---
+
+    @field_validator("email")
+    @classmethod
+    def sanitize_email(cls, v: str) -> str:
+        """
+        [UPDATE]: Centralized Cleaning. 
+        Forces email to lowercase and strips whitespace here at the core, 
+        guaranteeing it's clean regardless of how it entered the system.
+        """
+        return v.lower().strip()
+
+    @field_validator("password")
+    @classmethod
+    def enforce_password_security(cls, v: str) -> str:
+        """
+        [UPDATE]: UX vs. Security Message Splitting.
+        If a hacker tries to DoS the server with a 10,000-character password, 
+        we block it and give a generic response so they don't know our limit.
+        """
+        if len(v) > 72:
+            raise ShieldValidationError(
+                public_message="Invalid login credentials.",
+                internal_message=f"Login password length exceeded 72-char DoS cap. Length attempted: {len(v)}"
+            )
+        return v
+
     @field_validator("bot_trap")
     @classmethod
     def check_bot_trap(cls, v: Optional[str]) -> Optional[str]:
         """If a bot fills this invisible field, the payload is destroyed."""
         if v:
-            raise ValueError("Security Honeypot triggered. Payload rejected.")
+            # [UPDATE]: Escalated from a standard ValueError to a SecurityViolationError.
+            # This flags the global interceptor to return 403 Forbidden and log a high-priority alert.
+            raise SecurityViolationError(
+                internal_message=f"Login Security Honeypot triggered. Hidden payload: {v}"
+            )
         return v
 
 
@@ -50,13 +88,12 @@ class LoginInput:
     def validate_and_clean(self) -> LoginValidationSchema:
         """
         Forces the GraphQL input through the Pydantic Firewall.
-        Raises ValueError which we will catch in the resolver.
         """
-        # Lowercase and strip the email to prevent case-sensitive duplicate attacks
-        clean_email = self.email.lower().strip()
-        
+        # [UPDATE]: Made the bridge "Skinny".
+        # We removed manual string manipulation from this layer. 
+        # Pydantic handles all the lowering and stripping automatically now.
         return LoginValidationSchema(
-            email=clean_email,
+            email=self.email,
             password=self.password,
             bot_trap=self.bot_trap
         )

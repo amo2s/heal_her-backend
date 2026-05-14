@@ -2,15 +2,23 @@
 src/teens/heal_ai/guards.py
 
 Strict security, authentication, and content safety layer for the Teen Heal AI.
-Provides both the REST Dependency and the GraphQL Dependency.
+Now 100% integrated with the central Security Shield.
 """
 
 import re
-import jwt
 import logging
 from typing import Callable, Any, Dict
-from fastapi import HTTPException, status, Request
+from fastapi import Request
+
+# --- THE CORRECTED IMPORTS ---
+from jose import jwt
+from jose.exceptions import JWTError, ExpiredSignatureError, JWTClaimsError
+
 from core.config import settings
+
+# [UPDATE]: Imported the centralized Security Shield buckets. 
+# Zero usage of raw FastAPI HTTPExceptions allowed from here on out.
+from core.exceptions import SecurityViolationError, AuthenticationError, ValidationError
 
 # Setup logging to catch token issues in development
 logger = logging.getLogger("HEAL_SECURITY_GUARD")
@@ -26,12 +34,15 @@ def analyze_payload_safety(payload: str) -> None:
     """Executes heuristic checks to block severely unsafe inputs immediately."""
     for pattern in PROHIBITED_PATTERNS:
         if pattern.search(payload):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
+            # [UPDATE]: Replaced 400 HTTPException with ValidationError.
+            # We preserve the critical public SOS message for the teen, but securely 
+            # log the exact regex match to the internal audit trail.
+            raise ValidationError(
+                public_message=(
                     "This topic requires professional support. "
                     "Please use the Emergency SOS feature or reach out to a trusted contact in your Safe Circle immediately."
-                )
+                ),
+                internal_message=f"Heuristic Trigger: Prohibited emergency pattern '{pattern.pattern}' detected in payload."
             )
 
 
@@ -43,10 +54,14 @@ def decode_and_verify_teen_token(token: str) -> Dict[str, Any]:
     Decodes the actual JWT using your vault settings.
     Strictly enforces the 'teen' role assigned during signup and verifies audience.
     """
-    try:
-        # CLEANUP: Remove potential extra quotes (common in proxy/storage transfers)
-        sanitized_token = token.strip().replace('"', '').replace("'", "")
+    # [UPDATE]: Defensive Null-Check before string manipulation to prevent 500 crashes.
+    if not token:
+        raise AuthenticationError(internal_message="Empty token provided to decode engine.")
 
+    # CLEANUP: Remove potential extra quotes (common in proxy/storage transfers)
+    sanitized_token = token.strip().replace('"', '').replace("'", "")
+
+    try:
         payload = jwt.decode(
             sanitized_token, 
             settings.JWT_SECRET_KEY, 
@@ -60,30 +75,29 @@ def decode_and_verify_teen_token(token: str) -> Dict[str, Any]:
         
         # LOGIC CHECK: Match the dashboard role ('teen')
         if token_role != "teen":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: Heal AI is strictly for teens. Your role is '{token_role}'."
+            # [UPDATE]: Prevented Role Leak. Hacker gets a generic 403, 
+            # backend logs exactly which sector tried to breach the Teens zone.
+            raise SecurityViolationError(
+                internal_message=f"Sector Breach Attempt: User with role '{token_role}' tried to access /teens."
             )
             
         return payload
         
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail="Session expired. Please log in again."
+    except ExpiredSignatureError:
+        # [UPDATE]: Seamless mapping to the 401 AuthenticationError bucket.
+        raise AuthenticationError(internal_message="JWT Verification Failed: Session expired.")
+        
+    except JWTClaimsError as e:
+        # [UPDATE]: Obfuscated Cross-Domain spoofing. 
+        # If someone uses a 'kids' or 'young_adult' token here, we log it silently and deny access.
+        raise SecurityViolationError(
+            internal_message=f"Audience Mismatch (Cross-Domain Spoofing Attempt): {str(e)}"
         )
-    except jwt.InvalidAudienceError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cross-Domain Spoofing Blocked: Token does not belong to the teens sector."
-        )
-    except jwt.InvalidTokenError as e:
+        
+    except JWTError as e:
         # Debugging: Log the error to see why verification failed (Secret mismatch, etc.)
         logger.error(f"JWT Verification Failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail="Invalid security token."
-        )
+        raise AuthenticationError(internal_message=f"Invalid security token: {str(e)}")
 
 
 # ---------------------------------------------------------
@@ -95,9 +109,9 @@ async def verify_teen_jwt_dependency(request: Request) -> Dict[str, Any]:
     """
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail="Missing or invalid Authorization header."
+        # [UPDATE]: Replaced raw HTTPException.
+        raise AuthenticationError(
+            internal_message="Missing or invalid Authorization header in GraphQL request."
         )
     
     token = auth_header.split(" ")[1]
@@ -115,9 +129,9 @@ def require_safe_teen_context() -> Callable:
     async def dependency(request: Request) -> Dict[str, Any]:
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, 
-                detail="Authentication required."
+            # [UPDATE]: Replaced raw HTTPException.
+            raise AuthenticationError(
+                internal_message="Missing or invalid Authorization header in REST stream request."
             )
 
         token = auth_header.split(" ")[1]
