@@ -66,8 +66,8 @@ def decode_and_verify_teen_token(token: str) -> Dict[str, Any]:
             sanitized_token, 
             settings.JWT_SECRET_KEY, 
             algorithms=[settings.ALGORITHM],
-            # THE FIX: We now strictly enforce the "teens" audience to match login.py
-            audience="teens" 
+            # THE FIX: We now strictly enforce the singular "teen" audience to match login and refresh domains.
+            audience="teen" 
         )
         
         # Explicitly read the role injected by the auth service

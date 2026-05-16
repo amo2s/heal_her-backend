@@ -64,7 +64,7 @@ def decode_and_verify_kids_token(token: str) -> Dict[str, Any]:
             sanitized_token, 
             settings.JWT_SECRET_KEY, 
             algorithms=[settings.ALGORITHM],
-            audience="kids"  # Strictly enforce the 'kids' audience
+            audience="kid"  # Strictly enforce the 'kid' audience
         )
         
         # Explicitly read the role injected by login.py
