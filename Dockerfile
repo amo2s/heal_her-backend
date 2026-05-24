@@ -1,31 +1,36 @@
-# Use Python 3.10
-FROM python:3.10
+# Use a slim Python 3.13 image to meet project requirements
+FROM python:3.13-slim
+
+# Copy the pre-compiled uv binaries directly from the official image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Set the working directory
 WORKDIR /code
 
-# Copy the requirements file
-COPY ./requirements.txt /code/requirements.txt
+# Configure uv to build the virtual environment locally inside /code
+ENV UV_PROJECT_ENVIRONMENT="/code/.venv"
+# Prepend the virtual environment to the system PATH
+ENV PATH="/code/.venv/bin:$PATH"
 
-# Install the dependencies
-RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+# Copy dependency manifests first to leverage Docker layer caching
+COPY pyproject.toml uv.lock ./
 
-# Copy the rest of your backend code
+# Synchronize dependencies using uv
+RUN uv sync --frozen --no-dev
+
+# Copy the rest of the application source code
 COPY . /code
 
-# Create a new user (Required by Hugging Face)
+# Create the standard non-root user required by Hugging Face Spaces (ID 1000)
 RUN useradd -m -u 1000 user
 
-# --- THE FIX IS HERE ---
-# Give the 'user' ownership of the ENTIRE /code directory
-# This lets your app create 'queue_pending', 'temp_uploads', etc.
+# Grant the new user ownership of the application directory and the virtual environment
 RUN chown -R user:user /code
-RUN chown -R user:user /usr/local/lib/python3.10/site-packages
 
-# Switch to the new user
+# Switch to the required user context
 USER user
-ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH
+ENV HOME=/home/user
 
-# Start the app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Initialize the Granian server on the required Hugging Face port
+# Note: Ensure your FastAPI instance is named 'app' inside 'main.py'
+CMD ["granian", "--interface", "asgi", "main:app", "--host", "0.0.0.0", "--port", "7860"]
