@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from strawberry.fastapi import GraphQLRouter
@@ -7,6 +7,7 @@ from strawberry.extensions import DisableIntrospection
 
 # --- 1. CORE INFRASTRUCTURE ---
 from auth.graphql.mutations import AuthMutation
+from auth.logout.mutations import LogoutMutation
 from db import get_db
 from core.config import settings
 
@@ -40,7 +41,7 @@ class RootQuery(DashboardQuery):
         return "Heal Her Vault is online and fortified."
 
 @strawberry.type
-class RootMutation(AuthMutation, StaffAuthMutation, AdminLoginMutation):
+class RootMutation(AuthMutation, LogoutMutation, StaffAuthMutation, AdminLoginMutation):
     pass
 
 IS_PROD = not settings.DEBUG
@@ -55,9 +56,13 @@ schema = strawberry.Schema(
 # ---------------------------------------------------------
 # 3. CONTEXT & MIDDLEWARE
 # ---------------------------------------------------------
-async def get_context(request: Request, db = Depends(get_db)):
+async def get_context(request: Request, background_tasks: BackgroundTasks, db = Depends(get_db)):
+    """
+    injects request, background tasks (for async audits), and db sessions globally.
+    """
     return {
         "request": request,
+        "background_tasks": background_tasks,
         "session": db, 
         "db": db,      
     }
@@ -95,7 +100,7 @@ app.add_middleware(
 app.add_middleware(SecurityHeaderMiddleware)
 
 # ---------------------------------------------------------
-# 5. ABSOLUTE ROUTE MOUNTING (Option C)
+# 5. ABSOLUTE ROUTE MOUNTING
 # ---------------------------------------------------------
 
 # Global Auth/Main
@@ -121,6 +126,17 @@ app.include_router(ya_main_dashboard_router)
 app.include_router(ya_heal_ai_rest_router)
 app.include_router(ya_heal_ai_graphql_router)
 
-@app.get("/")
+# ---------------------------------------------------------
+# 6. HEALTH CHECK ENDPOINTS
+# ---------------------------------------------------------
+@app.get("/", tags=["Health"])
+@app.get("/health", tags=["Health"])
 async def root():
-    return {"message": "Heal Her API - Unauthorized Access is Prohibited."}
+    """
+    prevents empty pages and provides monitoring uptime status.
+    """
+    return {
+        "status": "online",
+        "message": "Heal Her Vault API is active. Unauthorized access is prohibited.",
+        "environment": "production" if IS_PROD else "development"
+    }
