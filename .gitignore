@@ -1,11 +1,7 @@
 .env
-
 .venv/
-
 env/
-
 venv/
-
 *.pyc
-
 __pycache__/
+upload_keys.py
