@@ -10,7 +10,7 @@ dependencies = [
     "cryptography>=47.0.0",
     "fastapi[standard]>=0.136.1",
     "granian>=2.7.4",
-    "guardrails-ai>=0.10.0",
+    "guardrails-ai @ git+https://github.com/guardrails-ai/guardrails.git"
     "passlib[argon2]>=1.7.4",
     "pii-masker>=0.1.2",
     "psycopg2-binary>=2.9.12",
