@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -8,8 +9,10 @@ from strawberry.extensions import DisableIntrospection
 # --- 1. CORE INFRASTRUCTURE ---
 from auth.graphql.mutations import AuthMutation
 from auth.logout.mutations import LogoutMutation
+from auth.password_reset.mutations import PasswordResetMutation
 from db import get_db
 from core.config import settings
+from core.redis import verify_cache_connection
 
 # --- MANAGEMENT ECOSYSTEM ---
 from management.auth.login.mutations import AdminLoginMutation
@@ -31,6 +34,7 @@ from young_adult.dashboard.router import young_adult_dashboard_router as ya_main
 from young_adult.heal_ai.handlers import router as ya_heal_ai_rest_router
 from young_adult.heal_ai.router import graphql_router as ya_heal_ai_graphql_router
 
+
 # ---------------------------------------------------------
 # 2. SCHEMA AGGREGATION
 # ---------------------------------------------------------
@@ -40,9 +44,17 @@ class RootQuery(DashboardQuery):
     def health_check(self) -> str:
         return "Heal Her Vault is online and fortified."
 
+
 @strawberry.type
-class RootMutation(AuthMutation, LogoutMutation, StaffAuthMutation, AdminLoginMutation):
+class RootMutation(
+    AuthMutation, 
+    LogoutMutation, 
+    StaffAuthMutation, 
+    AdminLoginMutation,
+    PasswordResetMutation
+):
     pass
+
 
 IS_PROD = not settings.DEBUG
 schema_extensions = [DisableIntrospection()] if IS_PROD else []
@@ -52,6 +64,7 @@ schema = strawberry.Schema(
     mutation=RootMutation, 
     extensions=schema_extensions 
 )
+
 
 # ---------------------------------------------------------
 # 3. CONTEXT & MIDDLEWARE
@@ -76,14 +89,24 @@ class SecurityHeaderMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
 
+
 # ---------------------------------------------------------
-# 4. APP INITIALIZATION
+# 4. APP INITIALIZATION & LIFESPAN
 # ---------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    executes critical infrastructure checks before the vault accepts traffic.
+    """
+    await verify_cache_connection()
+    yield
+
 app = FastAPI(
     title="Heal Her Backend",
     version="1.0.0",
     docs_url=None if IS_PROD else "/docs",
-    redoc_url=None if IS_PROD else "/redoc"
+    redoc_url=None if IS_PROD else "/redoc",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -98,6 +121,7 @@ app.add_middleware(
 )
 
 app.add_middleware(SecurityHeaderMiddleware)
+
 
 # ---------------------------------------------------------
 # 5. ABSOLUTE ROUTE MOUNTING
@@ -125,6 +149,7 @@ app.include_router(heal_ai_graphql_router)
 app.include_router(ya_main_dashboard_router)
 app.include_router(ya_heal_ai_rest_router)
 app.include_router(ya_heal_ai_graphql_router)
+
 
 # ---------------------------------------------------------
 # 6. HEALTH CHECK ENDPOINTS

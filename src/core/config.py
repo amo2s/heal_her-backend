@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str
     
     # THE EXTREMIST UPGRADE: Dedicated Management Secret
-    # If not provided in .env, you can default it or leave it required for maximum safety.
     MANAGEMENT_JWT_SECRET_KEY: str 
     
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
@@ -40,6 +39,10 @@ class Settings(BaseSettings):
     # --- FRONTEND INTEGRATION ---
     # This must match the secret sent in the 'x-healher-handshake' header
     FRONTEND_HANDSHAKE_SECRET: str
+
+    # --- EXTERNAL SERVICES ---
+    # Secure webhook URL for the Google Apps Script email engine
+    GOOGLE_MAILER_WEBHOOK_URL: str
 
     # --- APP CONFIGURATION ---
     DEBUG: bool = False
