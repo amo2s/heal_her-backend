@@ -93,6 +93,11 @@ class PureSecurityHeaderMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
+        # silently add the trailing slash soo fastapi doesnt trigger a 307 redirect
+        # this keeps your handshake headers from dropping during proxy transmission
+        if scope.get("path") == "/graphql":
+            scope["path"] = "/graphql/"
+
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
