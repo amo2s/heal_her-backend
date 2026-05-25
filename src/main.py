@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 from strawberry.fastapi import GraphQLRouter
 import strawberry
 from strawberry.extensions import DisableIntrospection
@@ -67,7 +67,7 @@ schema = strawberry.Schema(
 
 
 # ---------------------------------------------------------
-# 3. CONTEXT & MIDDLEWARE
+# 3. CONTEXT & MIDDLEWARE (THE PURE ASGI UPGRADE)
 # ---------------------------------------------------------
 async def get_context(request: Request, background_tasks: BackgroundTasks, db = Depends(get_db)):
     """
@@ -80,14 +80,29 @@ async def get_context(request: Request, background_tasks: BackgroundTasks, db = 
         "db": db,      
     }
 
-class SecurityHeaderMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        return response
+class PureSecurityHeaderMiddleware:
+    """
+    A low-level ASGI middleware that injects strict security headers.
+    By bypassing BaseHTTPMiddleware, it prevents context fragmentation 
+    and keeps proxy headers fully intact for the GraphQL graph.
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers.append("X-Content-Type-Options", "nosniff")
+                headers.append("X-Frame-Options", "DENY")
+                headers.append("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+                headers.append("Referrer-Policy", "strict-origin-when-cross-origin")
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
 # ---------------------------------------------------------
@@ -120,7 +135,8 @@ app.add_middleware(
     allow_headers=["Content-Type", "x-healher-handshake", "Authorization", "Accept"], 
 )
 
-app.add_middleware(SecurityHeaderMiddleware)
+# Apply the new Pure ASGI Shield
+app.add_middleware(PureSecurityHeaderMiddleware)
 
 
 # ---------------------------------------------------------
