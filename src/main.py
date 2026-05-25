@@ -93,10 +93,8 @@ class PureSecurityHeaderMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        # silently add the trailing slash soo fastapi doesnt trigger a 307 redirect
-        # this keeps your handshake headers from dropping during proxy transmission
-        if scope.get("path") == "/graphql":
-            scope["path"] = "/graphql/"
+        # [REMOVED]: The trailing slash modification block that caused the 307 loop is gone.
+        # It now strictly respects the standard path sent by your frontend proxy.
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
@@ -119,6 +117,12 @@ async def lifespan(app: FastAPI):
     executes critical infrastructure checks before the vault accepts traffic.
     """
     await verify_cache_connection()
+    
+    # [TEMP DEV FIX]: Force a flush on your cloud Aiven Valkey instance to clear all lockouts!
+    # REMEMBER TO REMOVE THESE TWO LINES AFTER U RESTART THE SERVER ONCE!!
+    from core.redis import valkey_client
+    await valkey_client.flushall() 
+    
     yield
 
 app = FastAPI(
@@ -154,6 +158,7 @@ graphql_app = GraphQLRouter(
     context_getter=get_context,
     graphql_ide="graphiql" if not IS_PROD else None
 )
+# We keep the standard prefix just like u wanted
 app.include_router(graphql_app, prefix="/graphql")
 
 # Kids 

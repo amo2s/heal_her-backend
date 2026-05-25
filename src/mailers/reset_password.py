@@ -32,17 +32,18 @@ async def send_reset_otp_email(
     # 2. structure the payload exactly how the google apps script expects it
     payload = {
         "recipient": email,
-        "subject": "Heal Her Vault - Secure Authorization Code",
+        "subject": "Heal Her - Secure Authorization Code",
         "html_body": html_body
     }
 
     try:
         # 3. the async non-blocking network execution
-        async with httpx.AsyncClient() as client:
+        # added follow_redirects=True so google's 302 redirect doesn't crash the request
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             response = await client.post(
                 settings.GOOGLE_MAILER_WEBHOOK_URL, 
                 json=payload,
-                timeout=5.0  # strict limit so it never hangs the api
+                timeout=10.0  # strict limit bumped slightly for the redirect hop
             )
             
             # raise an exception if google returns a 4xx or 5xx status code

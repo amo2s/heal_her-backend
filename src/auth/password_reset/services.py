@@ -42,7 +42,7 @@ async def request_password_reset_service(email: str, db: AsyncSession) -> dict:
         await asyncio.sleep(0.8)
         return {
             "status": "success",
-            "message": "If the provided credentials match an active vault account, a secure authorization code has been dispatched."
+            "message": "If the provided credentials match an active account, a secure authorization code has been dispatched."
         }
 
     # 2. Cryptographically secure 6-digit generation (never use standard 'random')
@@ -54,21 +54,20 @@ async def request_password_reset_service(email: str, db: AsyncSession) -> dict:
     # Store the hash in Valkey with a strict 10-minute expiration (600 seconds)
     await valkey_client.setex(f"security:otp:{clean_email}", 600, otp_hash)
 
-    # 4. Async Dispatch
-    # We use asyncio.create_task to fire the email in the background.
-    # The API returns the response instantly without waiting for Google's servers.
+    # 4. Synchronous Await Dispatch
+    # We use await to ensure we catch any network drops or Google Apps Script errors
+    # directly in the backend before returning a success message to the frontend.
     recipient_name = getattr(user, 'full_name', getattr(user, 'fullName', 'User'))
-    asyncio.create_task(
-        send_reset_otp_email(
-            email=clean_email, 
-            recipient_name=recipient_name, 
-            otp_code=otp_code
-        )
+    
+    await send_reset_otp_email(
+        email=clean_email, 
+        recipient_name=recipient_name, 
+        otp_code=otp_code
     )
 
     return {
         "status": "success",
-        "message": "If the provided credentials match an active vault account, a secure authorization code has been dispatched."
+        "message": "If the provided credentials match an active account, a secure authorization code has been dispatched."
     }
 
 
@@ -149,5 +148,5 @@ async def confirm_password_reset_service(reset_token: str, new_password: str, db
 
     return {
         "status": "success",
-        "message": "Your vault password has been successfully updated."
+        "message": "Your password has been successfully updated."
     }

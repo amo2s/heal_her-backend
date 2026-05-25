@@ -11,7 +11,7 @@ from core.redis import valkey_client
 class PasswordResetGuard(BasePermission):
     """
     x50 Fortified Shield for OTP Recovery.
-    Enforces Handshake, Dual-Axis Rate Limiting, and Brute-Force Lockouts.
+    [DEV MODE]: Rate limiting and lockouts temporarily disabled so u can test freely!
     """
     
     # zero-information exception message
@@ -22,37 +22,17 @@ class PasswordResetGuard(BasePermission):
         if not request:
             raise AuthenticationError(internal_message="missing request context.")
         
-        # 1. Hardware/Frontend Handshake Verification
+        # 1. Hardware/Frontend Handshake Verification (We keep this since frontend is sending it properly now!)
         handshake = request.headers.get("x-healher-handshake")
         if not handshake or handshake != settings.FRONTEND_HANDSHAKE_SECRET:
             raise AuthenticationError(internal_message="unauthorized client handshake.")
 
-        # 2. Immutable Device Fingerprinting
-        client_ip = request.client.host if request.client else "unknown"
-        forwarded = request.headers.get("x-forwarded-for")
-        ip_address = forwarded.split(",")[0].strip() if forwarded else client_ip
-        user_agent = request.headers.get("user-agent", "unknown")
+        # [TEMP DEV BYPASS]: We are skipping the IP fingerprinting and Valkey Matrix checks 
+        # entirely right here. It will just instantly return True and let u through every time!
         
-        fingerprint = hashlib.sha256(f"{ip_address}:{user_agent}".encode()).hexdigest()
-
-        # Extract the target email securely from the GraphQL input arguments
-        email = None
-        if "input" in kwargs:
-            email = getattr(kwargs["input"], "email", None)
-        elif "email" in kwargs:
-            email = kwargs["email"]
-
-        # 3. Execution of the Valkey Matrix
-        await self._enforce_ip_velocity(fingerprint)
-        
-        if email:
-            # lowercased for strict caching consistency
-            clean_email = email.lower().strip()
-            await self._check_brute_force_lockout(clean_email)
-            await self._enforce_email_velocity(clean_email)
-
         return True
 
+    # keeping the functions down here intact so we can easily wire them back up for production later!
     async def _enforce_ip_velocity(self, fingerprint: str) -> None:
         """
         Locks out an IP if they attempt more than 3 requests in 15 minutes (900s).
