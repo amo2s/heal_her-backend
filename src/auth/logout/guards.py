@@ -45,7 +45,7 @@ async def enforce_logout_guard(info: strawberry.Info, raw_token: str) -> Dict[st
         # we decode verifying the actual signature and expiration naturally
         payload = jwt.decode(
             raw_token, 
-            settings.SECRET_KEY, 
+            settings.JWT_SECRET_KEY, 
             algorithms=[settings.ALGORITHM]
         )
 
