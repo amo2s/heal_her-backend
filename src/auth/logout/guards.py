@@ -42,11 +42,13 @@ async def enforce_logout_guard(info: strawberry.Info, raw_token: str) -> Dict[st
             raise ValueError("missing security domain barrier.")
 
         # 4. strict cryptographic enforcement
-        # we decode verifying the actual signature and expiration naturally
+        # [FIX APPLIED]: The 'audience' parameter is now explicitly passed.
+        # we decode verifying the actual signature, expiration, and audience naturally.
         payload = jwt.decode(
             raw_token, 
             settings.JWT_SECRET_KEY, 
-            algorithms=[settings.ALGORITHM]
+            algorithms=[settings.ALGORITHM],
+            audience=security_domain
         )
 
         if payload.get("role") != security_domain:
