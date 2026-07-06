@@ -1,4 +1,5 @@
 import jwt
+import uuid
 from fastapi import Request, HTTPException, status
 from datetime import datetime, timedelta, timezone
 from core.config import settings
@@ -25,7 +26,8 @@ def create_access_token(data: dict, domain: str):
     to_encode.update({
         "exp": expire, 
         "type": "access",
-        "aud": domain  # THE EXTREMIST FIX: Binds token DNA to a specific dashboard
+        "aud": domain,  # THE EXTREMIST FIX: Binds token DNA to a specific dashboard
+        "jti": str(uuid.uuid4())  # [FIX APPLIED]: Unique tracking anchor for replay shield
     })
     return jwt.encode(to_encode, _get_secret(domain), algorithm=settings.ALGORITHM)
 
@@ -37,7 +39,8 @@ def create_refresh_token(data: dict, domain: str):
     to_encode.update({
         "exp": expire, 
         "type": "refresh",
-        "aud": domain
+        "aud": domain,
+        "jti": str(uuid.uuid4())  # [FIX APPLIED]: Unique tracking anchor for replay shield
     })
     return jwt.encode(to_encode, _get_secret(domain), algorithm=settings.ALGORITHM)
 
