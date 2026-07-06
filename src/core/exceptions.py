@@ -104,3 +104,24 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"error": "System is currently busy. Please try again later."}
     )
+
+# ---------------------------------------------------------
+# 4. THE SILENT SHIELD (Console Log Filters)
+# ---------------------------------------------------------
+class SilentIntrospectionFilter(logging.Filter):
+    """
+    Intercepts and permanently deletes GraphQL introspection warnings
+    from the console so your production logs stay perfectly clean.
+    """
+    def filter(self, record):
+        msg = record.getMessage()
+        # If the log contains these exact security rejection strings, drop it entirely.
+        if "GraphQL introspection has been disabled" in msg or "queryType" in msg:
+            return False 
+        return True
+
+# Apply the silencer to all relevant application loggers
+logging.getLogger("strawberry").addFilter(SilentIntrospectionFilter())
+logging.getLogger("graphql.execution").addFilter(SilentIntrospectionFilter())
+# Add to the root logger as a master catch-all for Granian/Uvicorn
+logging.getLogger().addFilter(SilentIntrospectionFilter())
