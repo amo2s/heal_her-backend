@@ -27,6 +27,9 @@ from teens.heal_ai.models import TeensChatSession, TeensChatMessage
 from management.auth.signup.models import Staff
 from young_adult.heal_ai.models import YoungAdultChatSession, YoungAdultChatMessage
 
+# NEW: Registering the Cryptographic Document Signing models
+from terms.models import DocumentSignature
+
 config = context.config
 
 if config.config_file_name is not None:

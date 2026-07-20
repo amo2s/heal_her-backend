@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # It must be a 32-byte url-safe base64-encoded string.
     MESSAGE_ENCRYPTION_KEY: str
 
+    # --- CRYPTOGRAPHIC SIGNATURE ENGINE ---
+    SIGNING_CERT_PATH: str
+    SIGNING_KEY_PATH: str
+    SIGNING_KEY_PASSPHRASE: str
+
     # --- FRONTEND INTEGRATION ---
     # This must match the secret sent in the 'x-healher-handshake' header
     FRONTEND_HANDSHAKE_SECRET: str

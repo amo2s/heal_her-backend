@@ -13,6 +13,7 @@ from auth.password_reset.mutations import PasswordResetMutation
 from db import get_db
 from core.config import settings
 from core.redis import verify_cache_connection
+from terms.mutations import LegalMutations
 
 # --- MANAGEMENT ECOSYSTEM ---
 from management.auth.login.mutations import AdminLoginMutation
@@ -51,7 +52,8 @@ class RootMutation(
     LogoutMutation, 
     StaffAuthMutation, 
     AdminLoginMutation,
-    PasswordResetMutation
+    PasswordResetMutation,
+    LegalMutations
 ):
     pass
 

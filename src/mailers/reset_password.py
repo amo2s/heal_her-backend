@@ -7,6 +7,7 @@ from core.exceptions import InfrastructureError
 
 # strict internal import from your presentation layer
 from mailers.templates.reset_otp import get_reset_otp_template
+from mailers.templates.signature_otp import get_signature_otp_template
 
 logger = logging.getLogger("HEAL_SECURITY")
 logger.setLevel(logging.WARNING)
@@ -62,4 +63,55 @@ async def send_reset_otp_email(
         logger.critical(f"[MAILER REJECTED] google script returned error status: {e.response.status_code}")
         raise InfrastructureError(
             internal_message="Email dispatch system rejected the payload."
+        )
+
+
+async def send_signature_otp_email(
+    email: str, 
+    recipient_name: str, 
+    otp_code: str, 
+    expiry_minutes: int = 5
+) -> bool:
+    """
+    Independent HTTP transport layer for Legal Document Signatures.
+    Fires the signature OTP HTML template to the Google Apps Script engine asynchronously.
+    """
+    
+    # 1. Generate the pure HTML string using the specific legal signature template
+    html_body = get_signature_otp_template(
+        recipient_name=recipient_name, 
+        otp_code=otp_code, 
+        expiry_minutes=expiry_minutes
+    )
+
+    # 2. Structure the payload (Notice the precise Legal-specific subject line)
+    payload = {
+        "recipient": email,
+        "subject": "🔒 Secure Verification Code: Heal Her Legal Execution",
+        "html_body": html_body
+    }
+
+    try:
+        # 3. The async non-blocking network execution
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            response = await client.post(
+                settings.GOOGLE_MAILER_WEBHOOK_URL, 
+                json=payload,
+                timeout=10.0
+            )
+            
+            response.raise_for_status()
+            logger.info(f"Legal Signature OTP email successfully dispatched to {email}")
+            
+            return True
+
+    except httpx.RequestError as e:
+        logger.critical(f"[MAILER DROP] Signature email dispatch network failure: {str(e)}")
+        raise InfrastructureError(
+            internal_message="Signature email dispatch system is currently unreachable."
+        )
+    except httpx.HTTPStatusError as e:
+        logger.critical(f"[MAILER REJECTED] Signature email dispatch rejected: {e.response.status_code}")
+        raise InfrastructureError(
+            internal_message="Signature email dispatch system rejected the payload."
         )
