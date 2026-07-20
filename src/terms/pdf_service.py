@@ -1,5 +1,5 @@
 """
-src/terms/services/pdf_service.py
+src/terms/pdf_service.py
 
 The central Cryptographic Document Engine.
 Handles in-memory PDF layout, SHA-256 fingerprinting, PKCS#7 cryptographic sealing,

@@ -1,5 +1,5 @@
 """
-src/terms/services/auth_service.py
+src/terms/auth_service.py
 
 Handles the cryptographic generation, atomic caching, and strict verification 
 of temporary Document Signature One-Time Passcodes (OTPs) using Aiven Valkey (Redis).

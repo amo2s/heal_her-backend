@@ -1,5 +1,5 @@
 """
-src/terms/graphql/mutations.py
+src/terms/mutations.py
 
 The GraphQL execution layer for Legal Document Signatures.
 Connects the Next.js frontend to the OTP cache, mailer transports, and Cryptographic PDF engine.

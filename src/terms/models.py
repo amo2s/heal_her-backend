@@ -1,5 +1,5 @@
 """
-src/legal/models.py
+src/terms/models.py
 
 Defines the SQLAlchemy models for the Legal & Terms of Service ecosystem.
 Synchronized with the central `db.Base` declarative base using classic syntax.
