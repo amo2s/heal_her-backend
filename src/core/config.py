@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     SIGNING_CERT_PATH: str = "placeholder_cert_path"
     SIGNING_KEY_PATH: str = "placeholder_key_path"
     SIGNING_KEY_PASSPHRASE: str = "placeholder_passphrase"
+    
+    # Consent signing secret for cryptographic verification
+    CONSENT_SIGNING_SECRET: str = Field(...)
 
     # --- FRONTEND INTEGRATION ---
     # This must match the secret sent in the 'x-healher-handshake' header

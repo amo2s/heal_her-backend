@@ -6,25 +6,31 @@ Synchronized with the central `db.Base` declarative base using classic syntax.
 """
 
 import uuid
-from sqlalchemy import Column, String, DateTime, func
+from sqlalchemy import Column, String, Integer, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
 
 # Import your central Base (assuming it lives here based on your snippet)
 from db import Base
 
+
 class DocumentSignature(Base):
     """
     The absolute source of truth for the legal audit trail.
     Tracks cryptographically sealed Terms of Service agreements.
+    Includes optional fields for parents/guardians signing on behalf of minors.
     """
     __tablename__ = "document_signatures"
 
     # Unique ID using native Postgres UUID
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     
-    # User Details
+    # Primary Signer Details (Adult or Guardian)
     client_name = Column(String(255), nullable=False)
     client_email = Column(String(255), index=True, nullable=False)
+    
+    # Optional Minor Details (If signed on behalf of a minor)
+    minor_name = Column(String(255), nullable=True)
+    minor_age = Column(Integer, nullable=True)
     
     # Audit Trail Data
     ip_address = Column(String(45), nullable=False) # 45 chars supports IPv6 max length
