@@ -9,6 +9,7 @@ import logging
 import strawberry
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from graphql import GraphQLError
 
 # -- Internal Service Imports --
 from terms.auth_service import generate_and_cache_signature_otp, verify_signature_otp, OTPVerificationError
@@ -27,6 +28,7 @@ logger = logging.getLogger("HEAL_LEGAL_SECURITY")
 class DocumentSignatureResponse:
     """
     Standardized strict response object for the Next.js client.
+    Note: Error states are now handled exclusively via standard GraphQL 'errors' array.
     """
     status: str
     message: str
@@ -58,10 +60,14 @@ class LegalMutations:
             
             return True
             
+        except OTPVerificationError as e:
+            logger.warning(f"[OTP REQUEST BLOCKED] {clean_email}: {e.message}")
+            extensions = {"retry_after_seconds": e.retry_after_seconds} if e.retry_after_seconds else {}
+            raise GraphQLError(e.message, extensions=extensions)
+            
         except Exception as e:
             logger.error(f"[OTP REQUEST FAILED] Could not process request for {clean_email}: {str(e)}")
-            # We raise a clean, non-revealing error to the frontend
-            raise Exception("Failed to process signature request. Please try again later.")
+            raise GraphQLError("Failed to process signature request. Please try again later.")
 
     @strawberry.mutation
     async def execute_document_signature(
@@ -116,16 +122,11 @@ class LegalMutations:
             )
             
         except OTPVerificationError as e:
-            # Safe failure state for incorrect/expired codes
-            return DocumentSignatureResponse(
-                status="error",
-                message=str(e)
-            )
+            extensions = {"retry_after_seconds": e.retry_after_seconds} if e.retry_after_seconds else {}
+            raise GraphQLError(e.message, extensions=extensions)
+            
         except Exception as e:
             # 4. Total Rollback Shield
             logger.critical(f"[EXECUTION FATAL] System failure executing signature for {clean_email}: {str(e)}")
             await db.rollback()
-            return DocumentSignatureResponse(
-                status="error",
-                message="A critical infrastructure error occurred during document execution. No changes were saved."
-            )
+            raise GraphQLError("A critical infrastructure error occurred during document execution. No changes were saved.")
