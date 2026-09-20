@@ -222,7 +222,7 @@ class HealAIService:
 
         # 5. Failover Architecture Setup
         model_map = {
-            "cohere": "command-r-plus",
+            "cohere": "command-r-plus-08-2024",
             "mistral": "mistral/mistral-large-latest",
             "gemini": "gemini/gemini-1.5-pro",
             "deepseek": "deepseek/deepseek-chat"
