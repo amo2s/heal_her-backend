@@ -1,0 +1,199 @@
+{# templates/legal/consent_document.html.jinja #}
+{# Design layer ONLY — every value below is trusted context handed in by pdf_service.py. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Heal Her — Consent &amp; Authorization Record</title>
+<style>
+
+  /* Print-appropriate palette: white paper, dark navy headings, muted rose accent — */
+  /* NOT the dark web theme, which doesn't photocopy or read well on a legal document. */
+  @page {
+    size: A4;
+    /* Bottom margin in pt, matching pyHanko's sig box (y: 40-110pt) with clearance to spare. */
+    margin: 90pt 40pt 130pt 40pt;
+    background-image: url('{{ watermark_data_uri }}');
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 55%;
+
+    @top-center  { content: element(letterhead); }
+    @bottom-center { content: element(pagefooter); }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 11pt;
+    color: #1a1a1a;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  /* --- LETTERHEAD (repeats on every page via @top-center above) --- */
+  .letterhead {
+    position: running(letterhead);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 2px solid #A44A63;
+    padding-bottom: 10px;
+  }
+  .letterhead img { height: 34px; }
+  .letterhead .brand-name {
+    font-family: Helvetica, Arial, sans-serif;
+    font-weight: 700;
+    font-size: 15pt;
+    color: #1C1246;
+  }
+  .letterhead .brand-contact {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #555;
+    margin-left: auto;
+    text-align: right;
+    line-height: 1.4;
+  }
+
+  /* --- FOOTER (repeats on every page via @bottom-center above) --- */
+  .pagefooter {
+    position: running(pagefooter);
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 7.5pt;
+    color: #888;
+    border-top: 1px solid #ddd;
+    padding-top: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .pagefooter .page-num::after {
+    content: "Page " counter(page) " of " counter(pages);
+  }
+
+  h1 {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 16pt;
+    color: #1C1246;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 9pt;
+    color: #A44A63;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 24px;
+  }
+
+  /* Summary box: the at-a-glance facts a reviewer checks first. */
+  .fact-box {
+    background: #FAF5F7;
+    border: 1px solid #E8D4DC;
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin: 20px 0;
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 9.5pt;
+  }
+  .fact-box .fact-row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .fact-box .fact-label { color: #777; }
+  .fact-box .fact-value { color: #1a1a1a; font-weight: 600; }
+
+  .guardian-note {
+    background: #FFF7ED;
+    border-left: 3px solid #C9862E;
+    padding: 10px 14px;
+    font-size: 9.5pt;
+    margin: 16px 0;
+  }
+
+  .signature-reserve-note {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #999;
+    font-style: italic;
+    margin-top: 40px;
+  }
+
+  section { margin-bottom: 18px; }
+  section h2 {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 11pt;
+    color: #1C1246;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 4px;
+  }
+</style>
+</head>
+<body>
+
+  <div class="letterhead">
+    <img src="{{ header_logo_data_uri }}" alt="Heal Her">
+    <span class="brand-name">Heal Her</span>
+    <span class="brand-contact">
+      Jos, Plateau State, Nigeria<br>
+      nwakaamos95@gmail.com&nbsp;|&nbsp;healher.com
+    </span>
+  </div>
+
+  <div class="pagefooter">
+    <span>Heal Her — Confidential Consent Record</span>
+    <span>Document ID: {{ document_id }}</span>
+    <span class="page-num"></span>
+  </div>
+
+  <h1>Consent &amp; Authorization Record</h1>
+  <div class="subtitle">Data Processing &amp; Legal Terms Acceptance — Policy {{ policy_version }}</div>
+
+  <div class="fact-box">
+    <div class="fact-row"><span class="fact-label">Signed by</span><span class="fact-value">{{ client_name }}</span></div>
+    <div class="fact-row"><span class="fact-label">Email on file</span><span class="fact-value">{{ client_email }}</span></div>
+    <div class="fact-row"><span class="fact-label">Date executed</span><span class="fact-value">{{ signed_date_display }}</span></div>
+    <div class="fact-row"><span class="fact-label">IP address recorded</span><span class="fact-value">{{ ip_address }}</span></div>
+    <div class="fact-row"><span class="fact-label">Document ID</span><span class="fact-value">{{ document_id }}</span></div>
+  </div>
+
+  {% if minor_name %}
+  <div class="guardian-note">
+    <strong>Guardian Consent.</strong> {{ client_name }} has certified they are the parent or legal guardian of
+    <strong>{{ minor_name }}</strong> (age {{ minor_age }}), and provides this consent on the minor's behalf in
+    accordance with Section 6 (AI Buddy for Kids) of the Heal Her Privacy Policy.
+  </div>
+  {% endif %}
+
+  <section>
+    <h2>1. Acknowledgement</h2>
+    <p>
+      By signing below, {{ client_name }} confirms they have read and understood the Heal Her Privacy Policy
+      (version {{ policy_version }}), including the sections on anonymous account design, AI training use of
+      chat logs, the No-Export Rule, the Red Flag Detector, and the Right to Erasure, and consents to the
+      processing of the data described therein.
+    </p>
+  </section>
+
+  <section>
+    <h2>2. Basis of Consent</h2>
+    <p>
+      This consent is provided freely and may be withdrawn at any time by exercising the Right to Erasure
+      described in Section 14 of the Privacy Policy. Withdrawal does not affect the lawfulness of processing
+      carried out before withdrawal.
+    </p>
+  </section>
+
+  <section>
+    <h2>3. Verification</h2>
+    <p>
+      This document is cryptographically sealed. The signature panel embedded at the bottom of this page,
+      including a scannable QR code, allows any party to verify this record's authenticity and confirm it
+      has not been altered since signing.
+    </p>
+  </section>
+
+  <p class="signature-reserve-note">
+    A cryptographic signature panel is embedded at the bottom of the final page of this document.
+  </p>
+
+</body>
+</html>

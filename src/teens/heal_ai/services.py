@@ -3,7 +3,7 @@ src/teens/heal_ai/services/heal_ai.py
 
 The Fortified Core Service for Teens Heal AI.
 Features: Security Shield Integration, Adaptive DB Execution, 
-and Zero-Leak Infrastructure Fail-Safes.
+Zero-Leak Infrastructure Fail-Safes, and Resilient LLM Failover.
 """
 
 import os
@@ -37,8 +37,6 @@ logger = logging.getLogger("HEAL_TEENS_SERVICE")
 # ---------------------------------------------------------
 # 1. APPLICATION-LEVEL ENCRYPTION ENGINE
 # ---------------------------------------------------------
-# [UPDATE]: Wrapped in a try/except to prevent application crash on boot if key is missing,
-# while ensuring the critical error is logged.
 try:
     fernet_cipher = Fernet(settings.MESSAGE_ENCRYPTION_KEY.encode())
 except Exception as e:
@@ -84,11 +82,19 @@ class APIKeyManager:
         
         fallback = os.getenv(f"{provider_key.upper()}_API_KEY")
         if not fallback:
-            # [UPDATE]: Replaced ValueError with InfrastructureError to mask environment config from the client
             raise InfrastructureError(
                 internal_message=f"CRITICAL: No API keys found for provider {provider}"
             )
         return fallback
+
+    def get_pool_size(self, provider: str) -> int:
+        """Helper to determine max retry attempts per provider."""
+        provider_key = provider.lower()
+        if provider_key in self.pools:
+            return len(self.pools[provider_key])
+        if os.getenv(f"{provider_key.upper()}_API_KEY"):
+            return 1
+        return 0
 
 key_manager = APIKeyManager()
 
@@ -132,7 +138,6 @@ async def generate_sidebar_title(session_id: str, first_message: str):
                 await db.commit()
             
     except Exception as e:
-        # [UPDATE]: Standardized error logging format
         logger.error(f"[WORKER ERROR] Failed to summarize teens session title: {str(e)}")
 
 
@@ -151,10 +156,10 @@ class HealAIService:
     ) -> AsyncGenerator[str, None]:
         """
         The Master Pipeline for Teens Heal AI.
-        [UPDATE]: Now uses the Security Shield and Adaptive DB Execution.
+        Integrated with Resilient State-Aware Failover and Cross-Provider Hot-Swapping.
         """
         
-        # [UPDATE]: Guard against malformed/empty messages before allocating DB or LLM resources
+        # Guard against malformed/empty messages before allocating DB or LLM resources
         if not raw_message.strip():
             raise ValidationError(public_message="I'm here to listen. What's on your mind?")
 
@@ -183,7 +188,6 @@ class HealAIService:
         try:
             await db.commit()
         except Exception as e:
-            # [UPDATE]: Infrastructure error masking for DB initialization failures
             raise InfrastructureError(internal_message=f"Teens DB Session Init Failure: {str(e)}")
 
         # 2. Context Retrieval (Adaptive Execution)
@@ -194,7 +198,6 @@ class HealAIService:
             .limit(15)
         )
         
-        # [UPDATE]: Adaptive Execution Engine handles varying SQLAlchemy sync/async results natively
         execute_result = db.execute(query)
         if inspect.isawaitable(execute_result):
             result = await execute_result
@@ -215,45 +218,71 @@ class HealAIService:
         # 4. Background Summarization
         if is_new_session:
             background_tasks.add_task(generate_sidebar_title, session_id, raw_message)
+            yield f"data: {json.dumps({'session_id': session_id})}\n\n"
 
-        # 5. Route to LLM
-        active_key = key_manager.get_key(provider.value)
+        # 5. Failover Architecture Setup
         model_map = {
             "cohere": "command-r-plus",
             "mistral": "mistral/mistral-large-latest",
             "gemini": "gemini/gemini-1.5-pro",
             "deepseek": "deepseek/deepseek-chat"
         }
-        target_model = model_map.get(provider.value, "mistral/mistral-large-latest")
 
-        if is_new_session:
-            yield f"data: {json.dumps({'session_id': session_id})}\n\n"
+        # Build sequence prioritizing the requested provider, then falling back across alternatives
+        fallback_sequence = [provider.value] + [p for p in model_map.keys() if p != provider.value]
 
-        # 6. Real-Time Streaming
         full_ai_response = ""
-        try:
-            response_stream = await acompletion(
-                model=target_model,
-                messages=messages_payload,
-                api_key=active_key,
-                stream=True
-            )
-            
-            async for chunk in response_stream:
-                if chunk.choices[0].delta.content:
-                    text_chunk = chunk.choices[0].delta.content
-                    full_ai_response += text_chunk
-                    yield f"data: {json.dumps({'content': text_chunk})}\n\n"
-                    
-        except Exception as e:
-            # [UPDATE]: Masked LLM outage response; internal logging of standard exception string
-            logger.error(f"[LLM ERROR] Streaming failed for Teens Heal AI: {str(e)}")
-            yield f"data: {json.dumps({'error': 'Heal AI encountered an issue. Please retry.'})}\n\n"
+        stream_successful = False
+        successful_provider = provider.value
+
+        # 6. Execution Loop (Cross-Provider Dynamic Fallback)
+        for current_provider in fallback_sequence:
+            if stream_successful:
+                break
+
+            target_model = model_map.get(current_provider)
+            pool_size = key_manager.get_pool_size(current_provider)
+
+            if pool_size == 0:
+                continue
+
+            # Intra-Provider Key Rotation
+            for attempt in range(pool_size):
+                try:
+                    active_key = key_manager.get_key(current_provider)
+
+                    response_stream = await acompletion(
+                        model=target_model,
+                        messages=messages_payload,
+                        api_key=active_key,
+                        stream=True
+                    )
+
+                    async for chunk in response_stream:
+                        if chunk.choices[0].delta.content:
+                            text_chunk = chunk.choices[0].delta.content
+                            full_ai_response += text_chunk
+                            yield f"data: {json.dumps({'content': text_chunk})}\n\n"
+
+                    stream_successful = True
+                    successful_provider = current_provider
+                    break  # Provider and key succeeded: exit rotation loop
+
+                except Exception as e:
+                    logger.warning(
+                        f"[{current_provider.upper()} API ERROR] Attempt {attempt + 1}/{pool_size} failed: {str(e)}"
+                    )
+                    continue  # Intercept failure and cycle key
+
+        # 7. Total Infrastructure Outage Handling
+        if not stream_successful:
+            logger.error("[LLM ERROR] All providers and keys exhausted for Teens Heal AI.")
+            yield f"data: {json.dumps({'error': 'Heal AI encountered a critical network disruption. Please retry later.'})}\n\n"
             return
 
         yield "data: [DONE]\n\n"
 
-        # 7. Persistent Storage for AI Response (Bulletproof Update)
+        # 8. Persistent Storage for AI Response (Adaptive Update)
         if full_ai_response:
             try:
                 encrypted_ai_msg = encrypt_message(full_ai_response)
@@ -262,16 +291,14 @@ class HealAIService:
                     session_id=session_id,
                     role=MessageRole.ASSISTANT.value,
                     encrypted_content=encrypted_ai_msg,
-                    provider_used=provider.value
+                    provider_used=successful_provider
                 )
                 
                 if db is not None:
                     db.add(ai_db_msg)
-                    # Adaptive Commit handling
                     commit_result = db.commit()
                     if commit_result is not None:
                         await commit_result
                         
             except Exception as db_err:
-                # [UPDATE]: Standardized logging string for disconnected session saves
                 logger.error(f"[SAFE FALLBACK] Stream finished successfully, but history save was interrupted: {str(db_err)}")
