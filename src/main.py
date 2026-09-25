@@ -120,11 +120,6 @@ async def lifespan(app: FastAPI):
     """
     await verify_cache_connection()
     
-    # [TEMP DEV FIX]: Force a flush on your cloud Aiven Valkey instance to clear all lockouts!
-    # REMEMBER TO REMOVE THESE TWO LINES AFTER U RESTART THE SERVER ONCE!!
-    from core.redis import valkey_client
-    await valkey_client.flushall() 
-    
     yield
 
 app = FastAPI(

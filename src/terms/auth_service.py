@@ -3,11 +3,14 @@ src/terms/auth_service.py
 
 Identity verification layer: cryptographic generation, atomic caching, rate-limited
 and lockout-protected verification of Document Signature OTPs via Aiven Valkey (Redis).
+Emits a scoped JWT for stateless authorization at the Go Gateway upon success.
 """
 
 import hashlib
 import secrets
 import logging
+import jwt
+from datetime import datetime, timedelta, timezone
 import redis.asyncio as redis
 
 from core.config import settings
@@ -36,6 +39,7 @@ CUMULATIVE_FAIL_LIMIT = 10          # Total daily failures before an extended, m
 LOCKOUT_BASE_SECONDS = 30           # Starting lockout duration; doubles per escalation.
 LOCKOUT_MAX_ESCALATIONS = 4         # Caps exponential growth so a lock can't run forever silently.
 LOCKOUT_MANUAL_REVIEW_SECONDS = 3600  # Hard 1-hour lock once cumulative daily limit is hit.
+JWT_EXPIRATION_MINUTES = 5          # Strict execution window for the returned authorization token.
 
 
 def _hash_email(email: str) -> str:
@@ -113,10 +117,10 @@ async def generate_and_cache_signature_otp(email: str) -> str:
         raise OTPVerificationError("Temporary system unavailability. Please try again later.")
 
 
-async def verify_signature_otp(email: str, provided_otp: str) -> bool:
+async def verify_signature_otp(email: str, provided_otp: str) -> str:
     """
-    Validates the OTP with constant-time comparison, enforces per-OTP and
-    daily-aggregate attempt limits, and burns the code on success or exhaustion.
+    Validates the OTP with constant-time comparison, enforces limits, burns the code,
+    and returns a cryptographically signed JWT for the Go Gateway to consume.
     """
     clean_email = _normalize(email)
     clean_provided_otp = provided_otp.strip()
@@ -172,8 +176,20 @@ async def verify_signature_otp(email: str, provided_otp: str) -> bool:
         # Success: burn the OTP and clear the per-OTP attempt counter (replay prevention).
         await valkey_client.delete(cache_key, attempts_key)
         logger.info(f"OTP successfully verified and burned for {email_fp}")
-
-        return True
+        
+        # Generate the scoped JWT for the Go Gateway
+        now = datetime.now(timezone.utc)
+        payload = {
+            "sub": clean_email,
+            "scope": "tos_execution",
+            "iat": now,
+            "exp": now + timedelta(minutes=JWT_EXPIRATION_MINUTES)
+        }
+        
+        # Symmetrically signed with the shared environment secret using HS256
+        token = jwt.encode(payload, settings.CONSENT_SIGNING_SECRET, algorithm="HS256")
+        
+        return token
 
     except redis.RedisError as e:
         logger.error(f"[INFRASTRUCTURE SHIELD] Valkey failure during OTP verification ({email_fp}): {str(e)}")
