@@ -20,13 +20,13 @@ from terms.pdf_service import generate_and_seal_document
 from mailers.reset_password import send_signature_otp_email
 
 # -- Database Models --
-from terms.models import DocumentSignature
+from terms.models import TOSAuditLedger
 
 logger = logging.getLogger("HEAL_LEGAL_SECURITY")
 
 
 @strawberry.type
-class DocumentSignatureResponse:
+class TOSAuditLedgerResponse:
     """
     Standardized strict response object for the Next.js client.
     Error states are handled exclusively via the standard GraphQL 'errors' array.
@@ -104,7 +104,7 @@ class LegalMutations:
         email: str,
         otp_code: str,
         ip_address: str
-    ) -> DocumentSignatureResponse:
+    ) -> TOSAuditLedgerResponse:
         """
         Step 2: Verifies the OTP, then releases the payload that was locked in step 1.
         Client no longer supplies name/minor fields here — they cannot be swapped post-verification.
@@ -131,7 +131,7 @@ class LegalMutations:
             )
 
             # 4. Permanent Database Audit Record Generation
-            new_signature = DocumentSignature(
+            new_signature = TOSAuditLedger(
                 client_name=payload["name"],
                 client_email=clean_email,
                 minor_name=payload["minor_name"],
@@ -148,7 +148,7 @@ class LegalMutations:
 
             logger.info(f"Legal document successfully executed, locked, and stored for {clean_email}")
 
-            return DocumentSignatureResponse(
+            return TOSAuditLedgerResponse(
                 status="success",
                 message="Document successfully signed and cryptographically locked.",
                 document_hash=pdf_metadata["document_hash"],

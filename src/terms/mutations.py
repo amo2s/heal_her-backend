@@ -20,7 +20,7 @@ from terms.pdf_service import generate_and_seal_document
 from mailers.reset_password import send_signature_otp_email
 
 # -- Database Models --
-from terms.models import DocumentSignature
+from terms.models import TOSAuditLedger
 
 logger = logging.getLogger("HEAL_LEGAL_SECURITY")
 
